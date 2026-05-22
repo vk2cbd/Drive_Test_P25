@@ -61,15 +61,32 @@ class SerialGpsSource:
             on_error("pyserial is not installed. Install requirements or use simulated GPS.")
             return
 
-        try:
-            with serial.Serial(self.port, self.baud, timeout=1.0) as ser:
-                while not self._stop_event.is_set():
-                    raw = ser.readline().decode("ascii", errors="ignore").strip()
+        while not self._stop_event.is_set():
+            try:
+                with serial.Serial(self.port, self.baud, timeout=1.0) as ser:
+                    on_error(f"GPS connected on {self.port}")
+                    self._read_loop(ser, on_fix)
+            except serial.SerialException as exc:
+                on_error(
+                    "GPS serial read failed. Check that the GPS is still plugged in and that "
+                    f"gpsd or ModemManager is not also using {self.port}: {exc}"
+                )
+                self._stop_event.wait(2.0)
+            except Exception as exc:
+                on_error(f"GPS error: {exc}. On Ubuntu, check the port path and dialout group permissions.")
+                self._stop_event.wait(2.0)
+
+    def _read_loop(self, ser: object, on_fix: FixCallback) -> None:
+        while not self._stop_event.is_set():
+            raw_bytes = ser.readline()
+            if not raw_bytes:
+                continue
+            for raw in raw_bytes.decode("ascii", errors="ignore").splitlines():
+                raw = raw.strip()
+                if raw:
                     fix = parse_nmea(raw)
                     if fix is not None:
                         on_fix(fix)
-        except Exception as exc:
-            on_error(f"GPS error: {exc}. On Ubuntu, check the port path and dialout group permissions.")
 
 
 class SimulatedGpsSource:

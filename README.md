@@ -54,6 +54,27 @@ dmesg | tail
 ls -l /dev/ttyUSB* /dev/ttyACM* 2>/dev/null
 ```
 
+If the app reports that the device is ready but returned no data, another Linux service may already have the GPS serial port open. Check for that with:
+
+```bash
+sudo lsof /dev/ttyUSB0
+sudo systemctl status gpsd ModemManager
+```
+
+Replace `/dev/ttyUSB0` with the port shown in the app. If either service is using the GPS, stop it before running the survey:
+
+```bash
+sudo systemctl stop gpsd
+sudo systemctl stop ModemManager
+```
+
+For a direct NMEA test outside the app:
+
+```bash
+source .venv/bin/activate
+python3 -m serial.tools.miniterm /dev/ttyUSB0 9600
+```
+
 ## CSV Format
 
 The logger writes:
