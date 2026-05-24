@@ -11,8 +11,8 @@ def test_csv_logger_writes_requested_columns(tmp_path) -> None:
     with CsvSurveyLogger(path) as logger:
         logger.write(fix, -87.456)
 
+    local_timestamp = fix.timestamp_utc.astimezone()
     assert path.read_text(encoding="utf-8").splitlines() == [
-        "timestamp_utc,gps_position,received_level_dbm",
-        "2026-05-22T10:30:00+00:00,\"33:52:07.680S 151:12:33.480E\",-87.46",
+        "date_local,time_local,latitude,longitude,received_level_dbm",
+        f"{local_timestamp:%Y-%m-%d},{local_timestamp:%H:%M:%S.%f},33:52:07.680S,151:12:33.480E,-87.46",
     ]
-

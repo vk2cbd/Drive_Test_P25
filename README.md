@@ -94,10 +94,10 @@ python3 -m serial.tools.miniterm /dev/ttyUSB0 4800
 The logger writes:
 
 ```csv
-timestamp_utc,gps_position,received_level_dbm
+date_local,time_local,latitude,longitude,received_level_dbm
 ```
 
-`gps_position` is formatted as latitude and longitude in degrees, minutes, and seconds.
+GPS time is converted from UTC to the computer's local timezone when the row is written. Latitude and longitude are formatted separately in degrees, minutes, and seconds.
 
 ## Ubuntu SDRplay Setup
 
