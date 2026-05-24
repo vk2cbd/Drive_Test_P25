@@ -41,7 +41,7 @@ USB GPS receivers normally appear as one of these devices:
 /dev/serial/by-id/...
 ```
 
-The GUI defaults to `/dev/ttyUSB0` and has a **Refresh** button that scans those Linux serial-device paths. If your user cannot open the GPS device, add yourself to the `dialout` group and then log out and back in:
+The GUI defaults to `/dev/ttyUSB0` at 4800 baud and has a **Refresh** button that scans those Linux serial-device paths. If your user cannot open the GPS device, add yourself to the `dialout` group and then log out and back in:
 
 ```bash
 sudo usermod -aG dialout "$USER"
@@ -72,7 +72,7 @@ For a direct NMEA test outside the app:
 
 ```bash
 source .venv/bin/activate
-python3 -m serial.tools.miniterm /dev/ttyUSB0 9600
+python3 -m serial.tools.miniterm /dev/ttyUSB0 4800
 ```
 
 ## CSV Format

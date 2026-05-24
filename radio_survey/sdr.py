@@ -35,8 +35,10 @@ class SoapySdrplayLevelMeter:
     def __init__(self) -> None:
         self._sdr = None
         self._stream = None
+        self._stream_active = False
         self._samples_per_level = 8192
         self._dbm_offset = -30.0
+        self._last_level_dbm: float | None = None
 
     def configure(self, params: dict[str, object]) -> None:
         try:
@@ -51,6 +53,10 @@ class SoapySdrplayLevelMeter:
         self._direction = SOAPY_SDR_RX
         self._channel = 0 if params.get("tuner", "A") == "A" else 1
         self._format = SOAPY_SDR_CF32
+        self._transient_read_codes = {
+            getattr(SoapySDR, "SOAPY_SDR_OVERFLOW", -4),
+            getattr(SoapySDR, "SOAPY_SDR_TIMEOUT", -1),
+        }
         self._samples_per_level = int(params.get("samples_per_level", 8192))
         self._dbm_offset = float(params.get("dbm_offset", -30.0))
 
@@ -72,30 +78,56 @@ class SoapySdrplayLevelMeter:
         self._set_gain(params)
         self._write_settings(params)
         self._stream = self._sdr.setupStream(self._direction, self._format, [self._channel])
-        self._sdr.activateStream(self._stream)
 
     def read_level_dbm(self) -> float:
         if self._sdr is None or self._stream is None:
             raise RuntimeError("SDR is not configured")
 
         buff = self._np.empty(self._samples_per_level, self._np.complex64)
-        result = self._sdr.readStream(self._stream, [buff], len(buff), timeoutUs=1_000_000)
-        if result.ret <= 0:
-            raise RuntimeError(f"SDR read failed with code {result.ret}")
+        last_error_code: int | None = None
+        self._activate_stream()
 
-        samples = buff[: result.ret]
-        rms = self._np.sqrt(self._np.mean(self._np.abs(samples) ** 2))
-        dbfs = 20.0 * math.log10(max(float(rms), 1e-12))
-        return dbfs + self._dbm_offset
+        try:
+            for _attempt in range(10):
+                result = self._sdr.readStream(self._stream, [buff], len(buff), timeoutUs=250_000)
+                if result.ret > 0:
+                    samples = buff[: result.ret]
+                    rms = self._np.sqrt(self._np.mean(self._np.abs(samples) ** 2))
+                    dbfs = 20.0 * math.log10(max(float(rms), 1e-12))
+                    self._last_level_dbm = dbfs + self._dbm_offset
+                    return self._last_level_dbm
+                last_error_code = int(result.ret)
+                if last_error_code not in self._transient_read_codes:
+                    raise RuntimeError(f"SDR read failed with code {last_error_code}")
+        finally:
+            self._deactivate_stream()
+
+        if self._last_level_dbm is not None:
+            return self._last_level_dbm
+        raise RuntimeError(
+            "SDR did not return samples before timeout. Try a lower sample rate, "
+            "larger samples-per-level value, or confirm the SDRplay API service is stable."
+        )
 
     def close(self) -> None:
         if self._sdr is not None and self._stream is not None:
             try:
-                self._sdr.deactivateStream(self._stream)
+                self._deactivate_stream()
                 self._sdr.closeStream(self._stream)
             finally:
                 self._stream = None
                 self._sdr = None
+                self._stream_active = False
+
+    def _activate_stream(self) -> None:
+        if not self._stream_active:
+            self._sdr.activateStream(self._stream)
+            self._stream_active = True
+
+    def _deactivate_stream(self) -> None:
+        if self._stream_active:
+            self._sdr.deactivateStream(self._stream)
+            self._stream_active = False
 
     def _set_if_supported(self, method_name: str, value: object) -> None:
         method = getattr(self._sdr, method_name, None)

@@ -66,7 +66,7 @@ class SurveyApp(tk.Tk):
         ttk.Checkbutton(frame, text="Simulated GPS", variable=self.gps_sim_var).grid(row=0, column=0, columnspan=3, sticky="w")
 
         self.gps_port_var = tk.StringVar(value=default_gps_port())
-        self.gps_baud_var = tk.IntVar(value=9600)
+        self.gps_baud_var = tk.IntVar(value=4800)
         ttk.Label(frame, text="GPS port").grid(row=1, column=0, sticky="w")
         self.gps_port_combo = ttk.Combobox(frame, textvariable=self.gps_port_var, values=discover_gps_ports(), width=18)
         self.gps_port_combo.grid(row=1, column=1, sticky="ew", padx=4)
@@ -299,7 +299,7 @@ class SurveyApp(tk.Tk):
 
         for label_value in (low, (low + high) / 2, high):
             y = margin_top + (high - label_value) / (high - low) * plot_h
-            canvas.create_text(margin_left - 8, y, text=f"{label_value:.0f}", fill="#b7c0c9", anchor="e", font=("Segoe UI", 9))
+            canvas.create_text(margin_left - 8, y, text=f"{label_value:.0f}", fill="#b7c0c9", anchor="e", font=("TkDefaultFont", 9))
 
         coords: list[float] = []
         for point in visible:

@@ -38,7 +38,7 @@ class GpsSource(Protocol):
 
 
 class SerialGpsSource:
-    def __init__(self, port: str, baud: int = 9600) -> None:
+    def __init__(self, port: str, baud: int = 4800) -> None:
         self.port = port
         self.baud = baud
         self._stop_event = threading.Event()
