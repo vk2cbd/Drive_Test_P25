@@ -48,6 +48,9 @@ class SurveyApp(tk.Tk):
         if self._last_valid_spectrum_y_max <= self._last_valid_spectrum_y_min:
             self._last_valid_spectrum_y_min = -120.0
             self._last_valid_spectrum_y_max = -20.0
+        self._last_valid_spectrum_averages = self._valid_spectrum_averages(self._settings.get("spectrum_averages", 1), 1)
+        self._spectrum_average_powers: tuple[float, ...] | None = None
+        self._spectrum_average_frequencies: tuple[float, ...] | None = None
         self._running = False
 
         self._build_ui()
@@ -180,6 +183,12 @@ class SurveyApp(tk.Tk):
         spectrum_y_min_buttons.grid(row=12, column=2, sticky="e")
         ttk.Button(spectrum_y_min_buttons, text="-", width=2, command=lambda: self._step_spectrum_y_axis(self.spectrum_y_min_var, -5.0)).grid(row=0, column=0)
         ttk.Button(spectrum_y_min_buttons, text="+", width=2, command=lambda: self._step_spectrum_y_axis(self.spectrum_y_min_var, 5.0)).grid(row=0, column=1)
+
+        self.spectrum_averages_var = tk.StringVar(value=str(self._last_valid_spectrum_averages))
+        ttk.Label(frame, text="Spec averages").grid(row=13, column=0, sticky="w")
+        spectrum_averages_entry = ttk.Entry(frame, textvariable=self.spectrum_averages_var, width=8)
+        spectrum_averages_entry.grid(row=13, column=1, sticky="ew", padx=4)
+        spectrum_averages_entry.bind("<Return>", lambda _event: self._commit_spectrum_averages())
 
     def _build_sdr_panel(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="SDR Parameters", padding=8)
@@ -352,6 +361,21 @@ class SurveyApp(tk.Tk):
         if redraw:
             self._redraw_spectrum()
 
+    def _commit_spectrum_averages(self) -> None:
+        value = self._parse_spectrum_averages(self.spectrum_averages_var.get())
+        if value is None:
+            self.spectrum_averages_var.set(str(self._last_valid_spectrum_averages))
+            self.status_var.set("Spectrum averages must be an integer from 1 to 100")
+            return
+        if value != self._last_valid_spectrum_averages:
+            self._spectrum_average_powers = None
+            self._spectrum_average_frequencies = None
+        self._last_valid_spectrum_averages = value
+        self.spectrum_averages_var.set(str(value))
+        self._settings["spectrum_averages"] = value
+        save_settings(self._settings)
+        self._redraw_spectrum()
+
     def _step_y_axis(self, var: tk.StringVar, delta_db: float) -> None:
         current = self._parse_y_value(var.get())
         if current is None:
@@ -404,6 +428,19 @@ class SurveyApp(tk.Tk):
     def _clamp_y_value(self, value: float) -> float:
         return min(-10.0, max(-120.0, value))
 
+    def _parse_spectrum_averages(self, value: object) -> int | None:
+        try:
+            parsed = int(str(value).strip())
+        except (TypeError, ValueError, tk.TclError):
+            return None
+        if parsed < 1 or parsed > 100:
+            return None
+        return parsed
+
+    def _valid_spectrum_averages(self, value: object, default: int) -> int:
+        parsed = self._parse_spectrum_averages(value)
+        return parsed if parsed is not None else default
+
     def _save_current_settings(self) -> None:
         settings = {
             "gps_simulated": self.gps_sim_var.get(),
@@ -415,6 +452,7 @@ class SurveyApp(tk.Tk):
             "plot_y_min_dbm": self._last_valid_y_min,
             "spectrum_y_max_dbm": self._last_valid_spectrum_y_max,
             "spectrum_y_min_dbm": self._last_valid_spectrum_y_min,
+            "spectrum_averages": self._last_valid_spectrum_averages,
         }
         settings.update(self._collect_sdr_display_params())
         self._settings = settings
@@ -587,6 +625,7 @@ class SurveyApp(tk.Tk):
         self.timestamp_var.set(fix.timestamp_utc.strftime("%H:%M:%S UTC"))
         self.level_var.set(f"{level:.2f} dBm")
         self._points.append(LevelPoint(time.time(), level))
+        self._update_spectrum_average()
         self._redraw_spectrum()
         self._redraw_plot()
 
@@ -664,13 +703,11 @@ class SurveyApp(tk.Tk):
         canvas.create_rectangle(0, 0, width, height, fill="#101418", outline="")
         canvas.create_rectangle(margin_left, margin_top, width - margin_right, height - margin_bottom, outline="#d7e0ea")
 
-        spectrum = self._level_meter.get_last_spectrum() if self._level_meter is not None else None
-        if spectrum is None or not spectrum.frequencies_mhz or not spectrum.powers_dbm:
+        frequencies = self._spectrum_average_frequencies
+        powers = self._spectrum_average_powers
+        if frequencies is None or powers is None or not frequencies or not powers:
             canvas.create_text(width / 2, height / 2, text="Waiting for spectrum", fill="#d7e0ea", font=("TkDefaultFont", 13))
             return
-
-        frequencies = spectrum.frequencies_mhz
-        powers = spectrum.powers_dbm
         x_min = min(frequencies)
         x_max = max(frequencies)
         if x_max <= x_min:
@@ -707,6 +744,29 @@ class SurveyApp(tk.Tk):
         if len(coords) >= 4:
             canvas.create_line(*coords, fill="#f7d35c", width=1)
         canvas.create_text(width - margin_right, height - 4, text="MHz", fill="#d7e0ea", anchor="se", font=("TkDefaultFont", 9))
+
+    def _update_spectrum_average(self) -> None:
+        spectrum = self._level_meter.get_last_spectrum() if self._level_meter is not None else None
+        if spectrum is None or not spectrum.frequencies_mhz or not spectrum.powers_dbm:
+            return
+
+        averages = self._last_valid_spectrum_averages
+        powers = tuple(float(value) for value in spectrum.powers_dbm)
+        if (
+            self._spectrum_average_powers is None
+            or self._spectrum_average_frequencies != spectrum.frequencies_mhz
+            or len(self._spectrum_average_powers) != len(powers)
+            or averages <= 1
+        ):
+            self._spectrum_average_frequencies = spectrum.frequencies_mhz
+            self._spectrum_average_powers = powers
+            return
+
+        alpha = 1.0 / averages
+        self._spectrum_average_powers = tuple(
+            previous + alpha * (current - previous)
+            for previous, current in zip(self._spectrum_average_powers, powers)
+        )
 
     def _on_close(self) -> None:
         self._cleanup()

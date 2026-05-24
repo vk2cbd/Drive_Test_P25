@@ -52,7 +52,7 @@ CSV logging is controlled by the **Log to CSV** button. It always defaults to of
 
 The received-level plot defaults to a manual Y axis. **Y max** and **Y min** are remembered between runs, can be typed directly, and have +/- buttons that adjust the value by 5 dB per press. Manual Y-axis values must be between -120 dBm and -10 dBm; values outside that range are ignored. **Autoscale Y** always defaults to off when the app starts.
 
-The spectrum display sits to the left of the received-level plot. Its frequency axis follows the configured center frequency and IF bandwidth. Spectrum Y-axis controls mirror the power plot controls and also default to manual scaling.
+The spectrum display sits to the left of the received-level plot. Its frequency axis follows the configured center frequency and IF bandwidth. Spectrum Y-axis controls mirror the power plot controls and also default to manual scaling. **Spec averages** applies display averaging to the spectrum trace and accepts integer values from 1 to 100.
 
 Changing the plot time window only changes which samples are visible. It does not delete the in-memory display history for the current app session.
 
