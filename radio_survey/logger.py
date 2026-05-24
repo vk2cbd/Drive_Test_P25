@@ -29,7 +29,7 @@ class CsvSurveyLogger:
         self._writer.writerow(
             (
                 local_timestamp.strftime("%Y-%m-%d"),
-                local_timestamp.strftime("%H:%M:%S.%f"),
+                local_timestamp.strftime("%H:%M:%S"),
                 latitude,
                 longitude,
                 f"{level_dbm:.2f}",
