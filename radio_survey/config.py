@@ -59,5 +59,6 @@ SDR_PARAMETER_DEFS: tuple[ParameterDef, ...] = (
     ParameterDef("ppm_correction", "PPM correction", "float", 0.0, units="ppm"),
     ParameterDef("decimation", "Decimation", "choice", 1, (1, 2, 4, 8, 16, 32)),
     ParameterDef("samples_per_level", "Samples per level", "int", 8192, minimum=1024, maximum=262144),
+    ParameterDef("measurement_bandwidth_khz", "Power meas BW", "float", 25.0, minimum=1.0, maximum=10000.0, units="kHz"),
     ParameterDef("dbm_offset", "dBm calibration offset", "float", -30.0, units="dB"),
 )

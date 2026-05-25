@@ -1,6 +1,6 @@
 # Radio Network Survey Logger
 
-Version: `0.2.0-alpha`
+Version: `0.3.0-alpha`
 
 Python GUI application for surveying a radio network with:
 
@@ -53,6 +53,8 @@ CSV logging is controlled by the **Log to CSV** button. It always defaults to of
 The received-level plot defaults to a manual Y axis. **Y max** and **Y min** are remembered between runs, can be typed directly, and have +/- buttons that adjust the value by 5 dB per press. Manual Y-axis values must be between -120 dBm and -10 dBm; values outside that range are ignored. **Autoscale Y** always defaults to off when the app starts.
 
 The spectrum display sits to the left of the received-level plot. Its frequency axis follows the configured center frequency and IF bandwidth. Spectrum Y-axis controls mirror the power plot controls and also default to manual scaling. **Spec averages** applies display averaging to the spectrum trace and accepts integer values from 1 to 100.
+
+The received-level plot now uses the **Power meas BW** field, in kHz, to measure channel power around the configured center frequency instead of always using the full SDR bandwidth. This usually makes a narrow signal-generator carrier much easier to see. The value is still relative until calibrated with **dBm calibration offset**.
 
 Changing the plot time window only changes which samples are visible. It does not delete the in-memory display history for the current app session.
 
@@ -114,7 +116,9 @@ GPS time is converted from UTC to the computer's local timezone when the row is 
 
 For an SDRplay RSPdx, install the SDRplay API/runtime and a SoapySDR SDRplay module if you want to use the included `soapy_sdrplay` backend. The application keeps SDR configuration in the GUI and passes supported settings into the backend where possible.
 
-The app talks to the RSPdx through SoapySDR and the SoapySDR SDRplay API 3 plugin. The RSPdx has three software-selectable antenna ports; the GUI exposes antenna choices A, B, and C.
+The app talks to the RSPdx through SoapySDR and the SoapySDR SDRplay API 3 plugin. The RSPdx has three software-selectable antenna ports; the GUI exposes antenna choices A, B, and C. When the survey starts, the app shows the SDR settings that were actually applied and warnings for optional settings that the installed SoapySDRplay module does not expose.
+
+The SDR stream runs continuously while the survey is active. GPS fixes snapshot the most recent SDR level rather than starting a fresh SDR read each time.
 
 If the app reports `SoapySDR::Device::make() no match`, SoapySDR cannot find a device matching the GUI's **Device args** field. First check whether SoapySDR can see the RSPdx:
 

@@ -215,6 +215,7 @@ class SurveyApp(tk.Tk):
             frame.columnconfigure(index, weight=1)
 
         self.status_var = tk.StringVar(value="Idle")
+        self.sdr_status_var = tk.StringVar(value="SDR not started")
         self.position_var = tk.StringVar(value="No fix")
         self.timestamp_var = tk.StringVar(value="-")
         self.level_var = tk.StringVar(value="-")
@@ -229,6 +230,8 @@ class SurveyApp(tk.Tk):
         ):
             ttk.Label(frame, text=label).grid(row=0, column=column, sticky="w")
             ttk.Label(frame, textvariable=var, font=("TkDefaultFont", 11, "bold")).grid(row=1, column=column, sticky="w")
+        ttk.Label(frame, text="SDR applied").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(frame, textvariable=self.sdr_status_var, wraplength=760).grid(row=2, column=1, columnspan=3, sticky="w", pady=(8, 0))
 
     def _build_plot_panel(self, parent: ttk.Frame) -> None:
         ttk.Label(parent, text="Spectrum (dBm)").grid(row=1, column=0, sticky="w", pady=(10, 2))
@@ -294,6 +297,7 @@ class SurveyApp(tk.Tk):
             self._level_meter = create_level_meter(str(params["backend"]))
             self._level_meter.configure(params)
             self._active_sdr_backend = str(params["backend"])
+            self._refresh_sdr_status()
             if self.logging_enabled_var.get():
                 self._open_logger()
             self._gps_source = SimulatedGpsSource() if self.gps_sim_var.get() else SerialGpsSource(self.gps_port_var.get(), int(self.gps_baud_var.get()))
@@ -314,6 +318,7 @@ class SurveyApp(tk.Tk):
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self.status_var.set("Stopped")
+        self.sdr_status_var.set("SDR not started")
 
     def _cleanup(self) -> None:
         if self._gps_source is not None:
@@ -481,6 +486,7 @@ class SurveyApp(tk.Tk):
         backend = str(params["backend"])
         if self._level_meter is not None and self._active_sdr_backend == backend:
             self._level_meter.update_settings(params)
+            self._refresh_sdr_status()
             return
 
         if self._level_meter is not None:
@@ -489,6 +495,17 @@ class SurveyApp(tk.Tk):
         new_meter.configure(params)
         self._level_meter = new_meter
         self._active_sdr_backend = backend
+        self._refresh_sdr_status()
+
+    def _refresh_sdr_status(self) -> None:
+        if self._level_meter is None:
+            self.sdr_status_var.set("SDR not started")
+            return
+        diagnostics = self._level_meter.get_diagnostics()
+        applied = "; ".join(diagnostics.applied) if diagnostics.applied else "No applied settings reported"
+        if diagnostics.warnings:
+            applied = f"{applied} | Warnings: {'; '.join(diagnostics.warnings)}"
+        self.sdr_status_var.set(applied)
 
     def _toggle_logging(self) -> None:
         self._sync_logger_state()
