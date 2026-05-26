@@ -10,6 +10,15 @@ from typing import Any
 CALIBRATION_PATH = Path.home() / ".config" / "radio_survey" / "calibration_vhf_100mhz.json"
 VHF_BROADCAST_MIN_MHZ = 88.0
 VHF_BROADCAST_MAX_MHZ = 108.0
+CALIBRATION_IGNORED_METADATA_KEYS = {
+    "antenna",
+    "bias_t",
+    "dab_notch",
+    "fm_notch",
+    "hdr_mode",
+    "mw_notch",
+    "tuner",
+}
 
 
 @dataclass(frozen=True)
@@ -56,6 +65,8 @@ class CalibrationProfile:
     def metadata_mismatches(self, current: dict[str, object]) -> tuple[str, ...]:
         mismatches: list[str] = []
         for key, expected in self.metadata.items():
+            if key in CALIBRATION_IGNORED_METADATA_KEYS:
+                continue
             actual = current.get(key)
             if key == "center_frequency_mhz" and self.name.startswith("VHF broadcast"):
                 if _frequency_in_range(actual, VHF_BROADCAST_MIN_MHZ, VHF_BROADCAST_MAX_MHZ):

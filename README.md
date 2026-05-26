@@ -1,6 +1,6 @@
 # Radio Network Survey Logger
 
-Version: `0.4.1-beta`
+Version: `0.4.2-beta`
 
 Python GUI application for surveying a radio network with:
 
@@ -56,7 +56,7 @@ The spectrum display sits to the left of the received-level plot. Its frequency 
 
 The received-level plot now uses the **Power meas BW** field, in kHz, to measure channel power around the configured center frequency instead of always using the full SDR bandwidth. The effective measurement bandwidth is capped by the configured sample rate and IF bandwidth, and the app shows both requested and effective bandwidth in the **SDR applied** status line. This usually makes a narrow signal-generator carrier much easier to see. The value is still relative until calibrated with **dBm calibration offset**.
 
-Changing the plot time window or SDR parameters only changes newly plotted samples. It does not delete the in-memory display history for the current app session, so parameter changes can be compared on the same trace. The plot window control sits below the received-level plot. The received-level plot advances only when GPS fixes add new samples, can be zoomed by dragging a rectangle with the mouse, and the **Home** button returns to a view containing all collected samples.
+Changing the plot time window or SDR parameters only changes newly plotted samples. It does not delete the in-memory display history for the current app session, so parameter changes can be compared on the same trace. The plot window control sits below the received-level plot. The received-level plot advances only when GPS fixes add new samples, can be zoomed by dragging a rectangle with the mouse, and the **Back** button returns to the previous plot view. Returning from a drag zoom to the normal scrolling view allows new GPS samples to scroll the plot again.
 
 ## VHF Calibration
 
@@ -75,7 +75,7 @@ Set the GUI to the exact SDR settings you want to calibrate, start the survey, t
 - `-40 dBm`
 - `1 dB compression`, with the generator level entered in **Compression dBm**
 
-The app interpolates or extrapolates between the signal-level calibration points and applies the correction to the received level, CSV log, and spectrum display. For this VHF broadcast profile, centre frequency remains valid anywhere from 88 to 108 MHz. If any other current SDR GUI setting differs from the stored calibration metadata, or if centre frequency is outside that range, the calibration status text turns red and the calibration is not applied until the settings match again.
+The app interpolates or extrapolates between the signal-level calibration points and applies the correction to the received level, CSV log, and spectrum display. For this VHF broadcast profile, centre frequency remains valid anywhere from 88 to 108 MHz. Tuner, antenna, HDR mode, Bias T, DAB notch, FM notch, and MW notch changes do not invalidate the calibration status. Other current SDR GUI settings must match the stored calibration metadata, and centre frequency must stay in the VHF broadcast range, otherwise the calibration status text turns red and the calibration is not applied until the settings match again.
 
 ## Ubuntu GPS Setup
 

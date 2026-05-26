@@ -24,6 +24,15 @@ class LevelPoint:
     level_dbm: float
 
 
+@dataclass(frozen=True)
+class PlotViewState:
+    zoom: tuple[float, float, float, float] | None
+    window_minutes: int
+    y_min: float
+    y_max: float
+    autoscale_y: bool
+
+
 CALIBRATION_TARGETS: tuple[tuple[str, float | None], ...] = (
     ("Noise floor", None),
     ("-100 dBm", -100.0),
@@ -68,8 +77,11 @@ class SurveyApp(tk.Tk):
         self._spectrum_average_frequencies: tuple[float, ...] | None = None
         self._calibration: CalibrationProfile | None = load_calibration()
         self._calibration_valid = False
+        self._last_valid_plot_window_minutes = self._valid_plot_window_minutes(self._settings.get("plot_window_minutes", 10))
+        self._last_autoscale_y = False
         self._plot_right_edge_s: float | None = None
         self._plot_zoom: tuple[float, float, float, float] | None = None
+        self._plot_view_history: list[PlotViewState] = []
         self._plot_drag_start: tuple[float, float] | None = None
         self._plot_drag_rect: int | None = None
         self._last_plot_bounds: tuple[float, float, float, float, float, float, float, float] | None = None
@@ -160,7 +172,7 @@ class SurveyApp(tk.Tk):
         ttk.Checkbutton(frame, text="Log to CSV", variable=self.logging_enabled_var, command=self._toggle_logging).grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         self.autoscale_y_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(frame, text="Autoscale Y", variable=self.autoscale_y_var, command=self._redraw_plot).grid(row=7, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Checkbutton(frame, text="Autoscale Y", variable=self.autoscale_y_var, command=self._commit_autoscale_y).grid(row=7, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         self.y_max_var = tk.StringVar(value=f"{self._last_valid_y_max:.0f}")
         self.y_min_var = tk.StringVar(value=f"{self._last_valid_y_min:.0f}")
@@ -300,14 +312,14 @@ class SurveyApp(tk.Tk):
         controls = ttk.Frame(parent)
         controls.grid(row=3, column=1, sticky="ew", padx=(10, 0), pady=(6, 0))
         controls.columnconfigure(1, weight=1)
-        self.window_minutes_var = tk.IntVar(value=int(self._settings.get("plot_window_minutes", 10)))
+        self.window_minutes_var = tk.IntVar(value=self._last_valid_plot_window_minutes)
         ttk.Label(controls, text="Plot window").grid(row=0, column=0, sticky="w")
         ttk.Scale(controls, from_=1, to=60, variable=self.window_minutes_var, command=lambda _v: self._commit_plot_window()).grid(row=0, column=1, sticky="ew", padx=4)
         window_spinbox = ttk.Spinbox(controls, from_=1, to=60, textvariable=self.window_minutes_var, width=5, command=self._commit_plot_window)
         window_spinbox.grid(row=0, column=2, sticky="e")
         window_spinbox.bind("<Return>", lambda _event: self._commit_plot_window())
         window_spinbox.bind("<KP_Enter>", lambda _event: self._commit_plot_window())
-        ttk.Button(controls, text="Home", command=self._home_plot_zoom).grid(row=0, column=3, sticky="e", padx=(6, 0))
+        ttk.Button(controls, text="Back", command=self._back_plot_view).grid(row=0, column=3, sticky="e", padx=(6, 0))
 
     def _make_var(self, param: ParameterDef) -> tk.Variable:
         value = self._settings.get(param.key, self._legacy_setting_value(param))
@@ -421,20 +433,39 @@ class SurveyApp(tk.Tk):
             self.status_var.set(f"Settings not applied: {exc}")
 
     def _commit_plot_window(self) -> None:
+        previous_window = self._last_valid_plot_window_minutes
+        window_minutes = self._valid_plot_window_minutes(self.window_minutes_var.get())
+        self.window_minutes_var.set(window_minutes)
+        if self._plot_zoom is not None or window_minutes != previous_window:
+            self._push_plot_view_history(window_minutes=previous_window)
         self._plot_zoom = None
+        self._last_valid_plot_window_minutes = window_minutes
+        if self._points:
+            self._plot_right_edge_s = self._points[-1].epoch_s
         self._redraw_plot()
-        self._settings["plot_window_minutes"] = int(self.window_minutes_var.get())
+        self._settings["plot_window_minutes"] = window_minutes
         save_settings(self._settings)
 
     def _commit_y_axis(self, redraw: bool = True) -> None:
+        previous_y_min = self._last_valid_y_min
+        previous_y_max = self._last_valid_y_max
         if not self._apply_y_axis_fields():
             self.status_var.set("Y axis values must be between -120 and -10 dBm")
             return
+        if previous_y_min != self._last_valid_y_min or previous_y_max != self._last_valid_y_max:
+            self._push_plot_view_history(y_min=previous_y_min, y_max=previous_y_max)
         self._settings["plot_y_max_dbm"] = self._last_valid_y_max
         self._settings["plot_y_min_dbm"] = self._last_valid_y_min
         save_settings(self._settings)
         if redraw:
             self._redraw_plot()
+
+    def _commit_autoscale_y(self) -> None:
+        autoscale_y = bool(self.autoscale_y_var.get())
+        if autoscale_y != self._last_autoscale_y:
+            self._push_plot_view_history(autoscale_y=self._last_autoscale_y)
+            self._last_autoscale_y = autoscale_y
+        self._redraw_plot()
 
     def _commit_spectrum_y_axis(self, redraw: bool = True) -> None:
         if not self._apply_spectrum_y_axis_fields():
@@ -510,6 +541,13 @@ class SurveyApp(tk.Tk):
         parsed = self._parse_y_value(value)
         return parsed if parsed is not None else default
 
+    def _valid_plot_window_minutes(self, value: object) -> int:
+        try:
+            parsed = int(float(str(value).strip()))
+        except (TypeError, ValueError, tk.TclError):
+            return 10
+        return min(60, max(1, parsed))
+
     def _clamp_y_value(self, value: float) -> float:
         return min(-10.0, max(-120.0, value))
 
@@ -548,7 +586,7 @@ class SurveyApp(tk.Tk):
             "gps_port": self.gps_port_var.get(),
             "gps_baud": int(self.gps_baud_var.get()),
             "csv_path": self.csv_path_var.get(),
-            "plot_window_minutes": int(self.window_minutes_var.get()),
+            "plot_window_minutes": self._last_valid_plot_window_minutes,
             "plot_y_max_dbm": self._last_valid_y_max,
             "plot_y_min_dbm": self._last_valid_y_min,
             "spectrum_y_max_dbm": self._last_valid_spectrum_y_max,
@@ -907,27 +945,66 @@ class SurveyApp(tk.Tk):
         if self._plot_zoom is not None:
             return self._plot_zoom
         right_edge = self._plot_right_edge_s or self._points[-1].epoch_s
-        window_s = max(60, int(self.window_minutes_var.get()) * 60)
+        window_s = max(60, self._last_valid_plot_window_minutes * 60)
         x_min = right_edge - window_s
         x_max = right_edge
         self._apply_y_axis_fields()
         return x_min, x_max, self._last_valid_y_min, self._last_valid_y_max
 
-    def _home_plot_zoom(self) -> None:
-        if not self._points:
-            self._plot_zoom = None
-            self._redraw_plot()
+    def _capture_plot_view_state(
+        self,
+        *,
+        window_minutes: int | None = None,
+        y_min: float | None = None,
+        y_max: float | None = None,
+        autoscale_y: bool | None = None,
+    ) -> PlotViewState:
+        return PlotViewState(
+            zoom=self._plot_zoom,
+            window_minutes=self._last_valid_plot_window_minutes if window_minutes is None else window_minutes,
+            y_min=self._last_valid_y_min if y_min is None else y_min,
+            y_max=self._last_valid_y_max if y_max is None else y_max,
+            autoscale_y=self._last_autoscale_y if autoscale_y is None else autoscale_y,
+        )
+
+    def _push_plot_view_history(
+        self,
+        *,
+        window_minutes: int | None = None,
+        y_min: float | None = None,
+        y_max: float | None = None,
+        autoscale_y: bool | None = None,
+    ) -> None:
+        previous_view = self._capture_plot_view_state(
+            window_minutes=window_minutes,
+            y_min=y_min,
+            y_max=y_max,
+            autoscale_y=autoscale_y,
+        )
+        if self._plot_view_history and self._plot_view_history[-1] == previous_view:
             return
-        x_values = [point.epoch_s for point in self._points]
-        y_values = [point.level_dbm for point in self._points]
-        x_min = min(x_values)
-        x_max = max(x_values)
-        if x_max <= x_min:
-            x_max = x_min + 1.0
-        y_min = min(y_values)
-        y_max = max(y_values)
-        y_span = max(y_max - y_min, 10.0)
-        self._plot_zoom = (x_min, x_max, y_min - y_span * 0.1, y_max + y_span * 0.1)
+        self._plot_view_history.append(previous_view)
+        del self._plot_view_history[:-20]
+
+    def _back_plot_view(self) -> None:
+        if not self._plot_view_history:
+            return
+        view = self._plot_view_history.pop()
+        self._plot_zoom = view.zoom
+        self._last_valid_plot_window_minutes = view.window_minutes
+        self.window_minutes_var.set(view.window_minutes)
+        self._last_valid_y_min = view.y_min
+        self._last_valid_y_max = view.y_max
+        self.y_min_var.set(f"{view.y_min:.0f}")
+        self.y_max_var.set(f"{view.y_max:.0f}")
+        self._last_autoscale_y = view.autoscale_y
+        self.autoscale_y_var.set(view.autoscale_y)
+        self._settings["plot_window_minutes"] = view.window_minutes
+        self._settings["plot_y_min_dbm"] = view.y_min
+        self._settings["plot_y_max_dbm"] = view.y_max
+        save_settings(self._settings)
+        if self._plot_zoom is None and self._points:
+            self._plot_right_edge_s = self._points[-1].epoch_s
         self._redraw_plot()
 
     def _plot_drag_start_event(self, event: tk.Event) -> None:
@@ -960,6 +1037,7 @@ class SurveyApp(tk.Tk):
         self._plot_drag_rect = None
         if abs(x1 - x0) < 8 or abs(y1 - y0) < 8:
             return
+        self._push_plot_view_history()
         self._plot_zoom = self._pixel_rect_to_plot_range(x0, y0, x1, y1)
         self._redraw_plot()
 
