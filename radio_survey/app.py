@@ -4,6 +4,7 @@ import queue
 import time
 import tkinter as tk
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -45,9 +46,11 @@ class SurveyApp(tk.Tk):
             self._last_valid_y_min = -120.0
             self._last_valid_y_max = -40.0
         self._last_valid_spectrum_y_max = self._valid_y_value(self._settings.get("spectrum_y_max_dbm", -20.0), -20.0)
-        self._last_valid_spectrum_y_min = self._valid_y_value(self._settings.get("spectrum_y_min_dbm", -120.0), -120.0)
+        self._last_valid_spectrum_y_min = self._valid_spectrum_y_value(self._settings.get("spectrum_y_min_dbm", -140.0), -140.0)
+        if float(self._last_valid_spectrum_y_min) == -120.0:
+            self._last_valid_spectrum_y_min = -140.0
         if self._last_valid_spectrum_y_max <= self._last_valid_spectrum_y_min:
-            self._last_valid_spectrum_y_min = -120.0
+            self._last_valid_spectrum_y_min = -140.0
             self._last_valid_spectrum_y_max = -20.0
         self._last_valid_spectrum_averages = self._valid_spectrum_averages(self._settings.get("spectrum_averages", 1), 1)
         self._spectrum_average_powers: tuple[float, ...] | None = None
@@ -212,9 +215,6 @@ class SurveyApp(tk.Tk):
             self._last_valid_sdr_values[param.key] = self._coerce_param_value(param, var.get())
             if param.units:
                 ttk.Label(frame, text=param.units).grid(row=row, column=2, sticky="w")
-        ttk.Button(frame, text="Apply SDR settings", command=self._commit_all_settings).grid(
-            row=len(SDR_PARAMETER_DEFS), column=0, columnspan=3, sticky="ew", pady=(8, 0)
-        )
 
     def _build_status_panel(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Realtime Data", padding=10)
@@ -375,7 +375,7 @@ class SurveyApp(tk.Tk):
 
     def _commit_spectrum_y_axis(self, redraw: bool = True) -> None:
         if not self._apply_spectrum_y_axis_fields():
-            self.status_var.set("Spectrum Y axis values must be between -120 and -10 dBm")
+            self.status_var.set("Spectrum Y axis values must be between -140 and -10 dBm")
             return
         self._settings["spectrum_y_max_dbm"] = self._last_valid_spectrum_y_max
         self._settings["spectrum_y_min_dbm"] = self._last_valid_spectrum_y_min
@@ -406,10 +406,10 @@ class SurveyApp(tk.Tk):
         self._commit_y_axis()
 
     def _step_spectrum_y_axis(self, var: tk.StringVar, delta_db: float) -> None:
-        current = self._parse_y_value(var.get())
+        current = self._parse_spectrum_y_value(var.get())
         if current is None:
             current = self._last_valid_spectrum_y_max if var is self.spectrum_y_max_var else self._last_valid_spectrum_y_min
-        var.set(f"{self._clamp_y_value(current + delta_db):.0f}")
+        var.set(f"{self._clamp_spectrum_y_value(current + delta_db):.0f}")
         self._commit_spectrum_y_axis()
 
     def _apply_y_axis_fields(self) -> bool:
@@ -424,8 +424,8 @@ class SurveyApp(tk.Tk):
         return True
 
     def _apply_spectrum_y_axis_fields(self) -> bool:
-        y_max = self._parse_y_value(self.spectrum_y_max_var.get())
-        y_min = self._parse_y_value(self.spectrum_y_min_var.get())
+        y_max = self._parse_spectrum_y_value(self.spectrum_y_max_var.get())
+        y_min = self._parse_spectrum_y_value(self.spectrum_y_min_var.get())
         if y_max is None or y_min is None or y_max <= y_min:
             return False
         self._last_valid_spectrum_y_max = y_max
@@ -449,6 +449,22 @@ class SurveyApp(tk.Tk):
 
     def _clamp_y_value(self, value: float) -> float:
         return min(-10.0, max(-120.0, value))
+
+    def _parse_spectrum_y_value(self, value: object) -> float | None:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError, tk.TclError):
+            return None
+        if parsed < -140.0 or parsed > -10.0:
+            return None
+        return parsed
+
+    def _valid_spectrum_y_value(self, value: object, default: float) -> float:
+        parsed = self._parse_spectrum_y_value(value)
+        return parsed if parsed is not None else default
+
+    def _clamp_spectrum_y_value(self, value: float) -> float:
+        return min(-10.0, max(-140.0, value))
 
     def _parse_spectrum_averages(self, value: object) -> int | None:
         try:
@@ -497,15 +513,9 @@ class SurveyApp(tk.Tk):
     def _reconfigure_level_meter(self) -> None:
         params = self._collect_sdr_params()
         measurement_signature = self._measurement_signature(params)
-        reset_measurement_history = (
-            self._last_measurement_signature is not None
-            and measurement_signature != self._last_measurement_signature
-        )
         backend = str(params["backend"])
         if self._level_meter is not None and self._active_sdr_backend == backend:
             self._level_meter.update_settings(params)
-            if reset_measurement_history:
-                self._clear_measurement_history()
             self._last_measurement_signature = measurement_signature
             self._refresh_sdr_status()
             return
@@ -516,8 +526,6 @@ class SurveyApp(tk.Tk):
         new_meter.configure(params)
         self._level_meter = new_meter
         self._active_sdr_backend = backend
-        if reset_measurement_history:
-            self._clear_measurement_history()
         self._last_measurement_signature = measurement_signature
         self._refresh_sdr_status()
 
@@ -529,14 +537,6 @@ class SurveyApp(tk.Tk):
             params.get("measurement_bandwidth_khz"),
             params.get("dbm_offset"),
         )
-
-    def _clear_measurement_history(self) -> None:
-        self._points.clear()
-        self._spectrum_average_powers = None
-        self._spectrum_average_frequencies = None
-        self.level_var.set("-")
-        self._redraw_plot()
-        self._redraw_spectrum()
 
     def _refresh_sdr_status(self) -> None:
         if self._level_meter is None:
@@ -693,7 +693,7 @@ class SurveyApp(tk.Tk):
             return
 
         self.position_var.set(fix.position_dms)
-        self.timestamp_var.set(fix.timestamp_utc.strftime("%H:%M:%S UTC"))
+        self.timestamp_var.set(_format_local_time(fix.timestamp_utc))
         self.level_var.set(f"{level:.2f} dBm")
         self._points.append(LevelPoint(time.time(), level))
         self._update_spectrum_average()
@@ -847,3 +847,7 @@ class SurveyApp(tk.Tk):
 def main() -> None:
     app = SurveyApp()
     app.mainloop()
+
+
+def _format_local_time(timestamp_utc: datetime) -> str:
+    return timestamp_utc.astimezone().strftime("%H:%M:%S %Z")

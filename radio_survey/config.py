@@ -50,7 +50,7 @@ SDR_PARAMETER_DEFS: tuple[ParameterDef, ...] = (
     ParameterDef("lna_state", "LNA state", "int", 0, minimum=0, maximum=9),
     ParameterDef("hdr_mode", "RSPdx HDR mode", "bool", False),
     ParameterDef("bias_t", "Bias-T", "bool", False),
-    ParameterDef("rf_notch", "RF notch", "bool", False),
+    ParameterDef("rf_notch", "RF/FM notch", "bool", False),
     ParameterDef("dab_notch", "DAB notch", "bool", False),
     ParameterDef("fm_notch", "FM notch", "bool", False),
     ParameterDef("mw_notch", "MW notch", "bool", False),

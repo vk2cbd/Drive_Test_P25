@@ -370,9 +370,7 @@ class SoapySdrplayLevelMeter:
             "lna_state": ("lnaState", "lnastate", "lna_state"),
             "hdr_mode": ("hdrMode", "hdrmode", "rspdx_hdr", "hdr_ctrl"),
             "bias_t": ("biasT_ctrl", "biasT", "bias_t"),
-            "rf_notch": ("rfnotch_ctrl", "rfNotch", "rf_notch"),
             "dab_notch": ("dabnotch_ctrl", "dabNotch", "dab_notch"),
-            "fm_notch": ("fmnotch_ctrl", "fmNotch", "fm_notch"),
             "mw_notch": ("mwnotch_ctrl", "mwNotch", "mw_notch"),
             "if_mode": ("if_mode", "ifMode", "IF_Mode"),
             "lo_mode": ("lo_mode", "loMode", "LO_Mode"),
@@ -384,6 +382,11 @@ class SoapySdrplayLevelMeter:
             applied_key = self._write_first_setting(setting_keys, params[param_key], warnings)
             if applied_key:
                 applied.append(f"{param_key} via {applied_key}")
+        if "rf_notch" in params or "fm_notch" in params:
+            rf_or_fm_notch = bool(params.get("rf_notch", False)) or bool(params.get("fm_notch", False))
+            applied_key = self._write_first_setting(("rfnotch_ctrl", "rfNotch", "rf_notch"), rf_or_fm_notch, warnings)
+            if applied_key:
+                applied.append(f"rf/fm_notch via {applied_key}")
         if "ppm_correction" in params:
             ppm = float(params["ppm_correction"])
             method = getattr(self._sdr, "setFrequencyCorrection", None)
@@ -397,6 +400,7 @@ class SoapySdrplayLevelMeter:
                 applied_key = self._write_first_setting(("corr", "ppm", "ppm_correction"), ppm, warnings)
                 if applied_key:
                     applied.append(f"PPM via {applied_key}")
+        correction_methods_applied: set[str] = set()
         for param_key, method_name in (
             ("dc_offset_correction", "setDCOffsetMode"),
             ("iq_balance_correction", "setIQBalanceMode"),
@@ -410,8 +414,13 @@ class SoapySdrplayLevelMeter:
             try:
                 method(self._direction, self._channel, bool(params[param_key]))
                 applied.append(param_key)
+                correction_methods_applied.add(param_key)
             except Exception as exc:
                 warnings.append(f"{param_key} not applied: {exc}")
+        if "iq_balance_correction" in params and "iq_balance_correction" not in correction_methods_applied:
+            applied_key = self._write_first_setting(("iqcorr_ctrl", "iqcorr", "iq_balance_correction"), params["iq_balance_correction"], warnings)
+            if applied_key:
+                applied.append(f"iq_balance_correction via {applied_key}")
         applied.append(
             f"Power BW {self._measurement_bandwidth_hz / 1_000.0:g} kHz "
             f"(effective {self._effective_measurement_bandwidth_hz() / 1_000.0:g} kHz)"
@@ -425,7 +434,7 @@ class SoapySdrplayLevelMeter:
         available = self._available_setting_keys()
         candidates = keys if not available else tuple(key for key in keys if key in available)
         if not candidates:
-            warnings.append(f"{keys[0]} setting unavailable")
+            warnings.append(f"{keys[0]} setting unavailable from SoapySDRPlay3")
             return None
         text_value = _setting_value(value)
         for key in candidates:
