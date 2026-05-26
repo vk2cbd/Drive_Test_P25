@@ -66,11 +66,11 @@ class SurveyApp(tk.Tk):
             self._last_valid_y_min = -120.0
             self._last_valid_y_max = -40.0
         self._last_valid_spectrum_y_max = self._valid_y_value(self._settings.get("spectrum_y_max_dbm", -20.0), -20.0)
-        self._last_valid_spectrum_y_min = self._valid_spectrum_y_value(self._settings.get("spectrum_y_min_dbm", -140.0), -140.0)
+        self._last_valid_spectrum_y_min = self._valid_spectrum_y_value(self._settings.get("spectrum_y_min_dbm", -150.0), -150.0)
         if float(self._last_valid_spectrum_y_min) == -120.0:
-            self._last_valid_spectrum_y_min = -140.0
+            self._last_valid_spectrum_y_min = -150.0
         if self._last_valid_spectrum_y_max <= self._last_valid_spectrum_y_min:
-            self._last_valid_spectrum_y_min = -140.0
+            self._last_valid_spectrum_y_min = -150.0
             self._last_valid_spectrum_y_max = -20.0
         self._last_valid_spectrum_averages = self._valid_spectrum_averages(self._settings.get("spectrum_averages", 1), 1)
         self._spectrum_average_powers: tuple[float, ...] | None = None
@@ -121,13 +121,14 @@ class SurveyApp(tk.Tk):
         plot_area.grid(row=0, column=1, sticky="nsew")
         plot_area.columnconfigure(0, weight=1)
         plot_area.columnconfigure(1, weight=1)
-        plot_area.rowconfigure(2, weight=1)
+        plot_area.rowconfigure(2, weight=0)
+        plot_area.rowconfigure(4, weight=1)
 
         self._build_io_panel(setup)
         self._build_calibration_panel(setup)
-        self._build_sdr_panel(setup)
         self._build_status_panel(plot_area)
         self._build_plot_panel(plot_area)
+        self._build_sdr_panel(plot_area)
         self._update_calibration_status()
 
         self.title(f"Radio Network Survey Logger {__version__}")
@@ -256,20 +257,25 @@ class SurveyApp(tk.Tk):
 
     def _build_sdr_panel(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="SDR Parameters", padding=8)
-        frame.grid(row=2, column=0, columnspan=2, sticky="nsew")
-        frame.columnconfigure(1, weight=1)
+        frame.grid(row=4, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
+        rows_per_group = 9
+        for group in range(3):
+            frame.columnconfigure(group * 3 + 1, weight=1)
 
-        for row, param in enumerate(SDR_PARAMETER_DEFS):
-            ttk.Label(frame, text=param.label).grid(row=row, column=0, sticky="w", pady=1)
+        for index, param in enumerate(SDR_PARAMETER_DEFS):
+            group = index // rows_per_group
+            row = index % rows_per_group
+            column = group * 3
+            ttk.Label(frame, text=param.label).grid(row=row, column=column, sticky="w", pady=1, padx=(0 if group == 0 else 12, 0))
             var = self._make_var(param)
             self._vars[param.key] = var
             widget = self._make_widget(frame, param, var)
             self._widgets[param.key] = widget
-            widget.grid(row=row, column=1, sticky="ew", padx=4, pady=1)
+            widget.grid(row=row, column=column + 1, sticky="ew", padx=4, pady=1)
             self._bind_commit(widget, param)
             self._last_valid_sdr_values[param.key] = self._coerce_param_value(param, var.get())
             if param.units:
-                ttk.Label(frame, text=param.units).grid(row=row, column=2, sticky="w")
+                ttk.Label(frame, text=param.units).grid(row=row, column=column + 2, sticky="w")
 
     def _build_status_panel(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Realtime Data", padding=10)
@@ -300,9 +306,11 @@ class SurveyApp(tk.Tk):
         ttk.Label(parent, text="Spectrum (dBm)").grid(row=1, column=0, sticky="w", pady=(10, 2))
         ttk.Label(parent, text="Received Level (dBm)").grid(row=1, column=1, sticky="w", pady=(10, 2), padx=(10, 0))
         self.spectrum_canvas = tk.Canvas(parent, background="#101418", highlightthickness=0)
+        self.spectrum_canvas.configure(height=260)
         self.spectrum_canvas.grid(row=2, column=0, sticky="nsew")
         self.spectrum_canvas.bind("<Configure>", lambda _event: self._redraw_spectrum())
         self.canvas = tk.Canvas(parent, background="#101418", highlightthickness=0)
+        self.canvas.configure(height=260)
         self.canvas.grid(row=2, column=1, sticky="nsew", padx=(10, 0))
         self.canvas.bind("<Configure>", lambda _event: self._redraw_plot())
         self.canvas.bind("<ButtonPress-1>", self._plot_drag_start_event)
@@ -391,7 +399,10 @@ class SurveyApp(tk.Tk):
         self._running = True
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
-        self.status_var.set("Running")
+        self.position_var.set("Waiting for GPS fix")
+        self.timestamp_var.set("-")
+        self.level_var.set("-")
+        self.status_var.set("Waiting for valid GPS position")
 
     def _stop(self) -> None:
         self._cleanup()
@@ -469,7 +480,7 @@ class SurveyApp(tk.Tk):
 
     def _commit_spectrum_y_axis(self, redraw: bool = True) -> None:
         if not self._apply_spectrum_y_axis_fields():
-            self.status_var.set("Spectrum Y axis values must be between -140 and -10 dBm")
+            self.status_var.set("Spectrum Y axis values must be between -150 and -10 dBm")
             return
         self._settings["spectrum_y_max_dbm"] = self._last_valid_spectrum_y_max
         self._settings["spectrum_y_min_dbm"] = self._last_valid_spectrum_y_min
@@ -556,7 +567,7 @@ class SurveyApp(tk.Tk):
             parsed = float(value)
         except (TypeError, ValueError, tk.TclError):
             return None
-        if parsed < -140.0 or parsed > -10.0:
+        if parsed < -150.0 or parsed > -10.0:
             return None
         return parsed
 
@@ -565,7 +576,7 @@ class SurveyApp(tk.Tk):
         return parsed if parsed is not None else default
 
     def _clamp_spectrum_y_value(self, value: float) -> float:
-        return min(-10.0, max(-140.0, value))
+        return min(-10.0, max(-150.0, value))
 
     def _parse_spectrum_averages(self, value: object) -> int | None:
         try:
@@ -871,7 +882,7 @@ class SurveyApp(tk.Tk):
 
         self.position_var.set(fix.position_dms)
         self.timestamp_var.set(_format_local_time(fix.timestamp_utc))
-        self.level_var.set(f"{level:.2f} dBm")
+        self.level_var.set(f"{level:.1f} dBm")
         point_time = time.time()
         self._points.append(LevelPoint(point_time, level))
         if self._plot_zoom is None:
@@ -899,6 +910,9 @@ class SurveyApp(tk.Tk):
         for fraction in (0.0, 0.25, 0.5, 0.75, 1.0):
             y = margin_top + plot_h * fraction
             canvas.create_line(margin_left, y, width - margin_right, y, fill="#202a33")
+        for fraction in (0.25, 0.5, 0.75):
+            x = margin_left + plot_w * fraction
+            canvas.create_line(x, margin_top, x, height - margin_bottom, fill="#202a33")
 
         if not self._points:
             self._last_plot_bounds = None
@@ -1015,7 +1029,18 @@ class SurveyApp(tk.Tk):
         self._plot_drag_start = (x, y)
         if self._plot_drag_rect is not None:
             self.canvas.delete(self._plot_drag_rect)
-        self._plot_drag_rect = self.canvas.create_rectangle(x, y, x, y, outline="#ffffff", dash=(3, 2))
+        self._plot_drag_rect = self.canvas.create_rectangle(
+            x,
+            y,
+            x,
+            y,
+            outline="#ffd24d",
+            width=2,
+            dash=(4, 2),
+            fill="#263746",
+            stipple="gray25",
+        )
+        self.canvas.lift(self._plot_drag_rect)
 
     def _plot_drag_motion_event(self, event: tk.Event) -> None:
         if self._plot_drag_start is None or self._plot_drag_rect is None:
@@ -1024,6 +1049,7 @@ class SurveyApp(tk.Tk):
         x1 = self._clamp_plot_x(float(event.x))
         y1 = self._clamp_plot_y(float(event.y))
         self.canvas.coords(self._plot_drag_rect, x0, y0, x1, y1)
+        self.canvas.lift(self._plot_drag_rect)
 
     def _plot_drag_release_event(self, event: tk.Event) -> None:
         if self._plot_drag_start is None or self._last_plot_bounds is None:

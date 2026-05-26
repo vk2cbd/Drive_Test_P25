@@ -1,6 +1,6 @@
 # Radio Network Survey Logger
 
-Version: `0.4.2-beta`
+Version: `0.4.3-beta`
 
 Python GUI application for surveying a radio network with:
 
@@ -52,11 +52,11 @@ CSV logging is controlled by the **Log to CSV** button. It always defaults to of
 
 The received-level plot defaults to a manual Y axis. **Y max** and **Y min** are remembered between runs, can be typed directly, and have +/- buttons that adjust the value by 5 dB per press. Manual Y-axis values must be between -120 dBm and -10 dBm; values outside that range are ignored. **Autoscale Y** always defaults to off when the app starts.
 
-The spectrum display sits to the left of the received-level plot. Its frequency axis follows the configured center frequency and IF bandwidth. Spectrum Y-axis controls mirror the power plot controls and also default to manual scaling, with manual values from -140 dBm to -10 dBm. **Spec averages** applies display averaging to the spectrum trace and accepts integer values from 1 to 100.
+The spectrum display sits to the left of the received-level plot. Its frequency axis follows the configured center frequency and IF bandwidth. Spectrum Y-axis controls mirror the power plot controls and also default to manual scaling, with manual values from -150 dBm to -10 dBm. **Spec averages** applies display averaging to the spectrum trace and accepts integer values from 1 to 100.
 
 The received-level plot now uses the **Power meas BW** field, in kHz, to measure channel power around the configured center frequency instead of always using the full SDR bandwidth. The effective measurement bandwidth is capped by the configured sample rate and IF bandwidth, and the app shows both requested and effective bandwidth in the **SDR applied** status line. This usually makes a narrow signal-generator carrier much easier to see. The value is still relative until calibrated with **dBm calibration offset**.
 
-Changing the plot time window or SDR parameters only changes newly plotted samples. It does not delete the in-memory display history for the current app session, so parameter changes can be compared on the same trace. The plot window control sits below the received-level plot. The received-level plot advances only when GPS fixes add new samples, can be zoomed by dragging a rectangle with the mouse, and the **Back** button returns to the previous plot view. Returning from a drag zoom to the normal scrolling view allows new GPS samples to scroll the plot again.
+Changing the plot time window or SDR parameters only changes newly plotted samples. It does not delete the in-memory display history for the current app session, so parameter changes can be compared on the same trace. The plot window control sits below the received-level plot. The received-level plot advances only when GPS fixes add new samples, draws vertical time graticles at 25%, 50%, and 75% of the visible time span, can be zoomed by dragging a visible rectangle with the mouse, and the **Back** button returns to the previous plot view. Returning from a drag zoom to the normal scrolling view allows new GPS samples to scroll the plot again.
 
 ## VHF Calibration
 
