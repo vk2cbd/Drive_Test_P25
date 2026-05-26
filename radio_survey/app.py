@@ -9,6 +9,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from . import __version__
+from .calibration import CalibrationPoint, CalibrationProfile, load_calibration, new_vhf_broadcast_profile, save_calibration
 from .config import SDR_PARAMETER_DEFS, ParameterDef
 from .gps import SerialGpsSource, SimulatedGpsSource, default_gps_port, discover_gps_ports
 from .logger import CsvSurveyLogger
@@ -21,6 +22,16 @@ from .sdr import LevelMeter, create_level_meter
 class LevelPoint:
     epoch_s: float
     level_dbm: float
+
+
+CALIBRATION_TARGETS: tuple[tuple[str, float | None], ...] = (
+    ("Noise floor", None),
+    ("-100 dBm", -100.0),
+    ("-80 dBm", -80.0),
+    ("-60 dBm", -60.0),
+    ("-40 dBm", -40.0),
+    ("1 dB compression", None),
+)
 
 
 class SurveyApp(tk.Tk):
@@ -55,6 +66,8 @@ class SurveyApp(tk.Tk):
         self._last_valid_spectrum_averages = self._valid_spectrum_averages(self._settings.get("spectrum_averages", 1), 1)
         self._spectrum_average_powers: tuple[float, ...] | None = None
         self._spectrum_average_frequencies: tuple[float, ...] | None = None
+        self._calibration: CalibrationProfile | None = load_calibration()
+        self._calibration_valid = False
         self._running = False
         self._last_measurement_signature: tuple[object, ...] | None = None
 
@@ -94,9 +107,11 @@ class SurveyApp(tk.Tk):
         plot_area.rowconfigure(2, weight=1)
 
         self._build_io_panel(setup)
+        self._build_calibration_panel(setup)
         self._build_sdr_panel(setup)
         self._build_status_panel(plot_area)
         self._build_plot_panel(plot_area)
+        self._update_calibration_status()
 
         self.title(f"Radio Network Survey Logger {__version__}")
 
@@ -199,9 +214,40 @@ class SurveyApp(tk.Tk):
         spectrum_averages_entry.grid(row=13, column=1, sticky="ew", padx=4)
         spectrum_averages_entry.bind("<Return>", lambda _event: self._commit_spectrum_averages())
 
+    def _build_calibration_panel(self, parent: ttk.Frame) -> None:
+        frame = ttk.LabelFrame(parent, text="Calibration", padding=8)
+        frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        frame.columnconfigure(1, weight=1)
+
+        self.calibration_point_var = tk.StringVar(value=CALIBRATION_TARGETS[1][0])
+        self.calibration_compression_var = tk.StringVar(value=str(self._settings.get("compression_input_dbm", "-30.0")))
+        self.calibration_status_var = tk.StringVar(value="No calibration loaded")
+
+        ttk.Label(frame, text="Point").grid(row=0, column=0, sticky="w")
+        point_combo = ttk.Combobox(
+            frame,
+            textvariable=self.calibration_point_var,
+            values=[label for label, _target in CALIBRATION_TARGETS],
+            state="readonly",
+            width=18,
+        )
+        point_combo.grid(row=0, column=1, sticky="ew", padx=4)
+
+        ttk.Label(frame, text="Compression dBm").grid(row=1, column=0, sticky="w")
+        compression_entry = ttk.Entry(frame, textvariable=self.calibration_compression_var, width=12)
+        compression_entry.grid(row=1, column=1, sticky="ew", padx=4)
+        compression_entry.bind("<Return>", lambda _event: self._save_current_settings())
+        compression_entry.bind("<KP_Enter>", lambda _event: self._save_current_settings())
+
+        ttk.Button(frame, text="New VHF 100 MHz cal", command=self._new_calibration).grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        ttk.Button(frame, text="Capture point", command=self._capture_calibration_point).grid(row=2, column=1, sticky="ew", padx=4, pady=(6, 0))
+
+        self.calibration_status_label = tk.Label(frame, textvariable=self.calibration_status_var, anchor="w", justify="left", wraplength=360)
+        self.calibration_status_label.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+
     def _build_sdr_panel(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="SDR Parameters", padding=8)
-        frame.grid(row=1, column=0, columnspan=2, sticky="nsew")
+        frame.grid(row=2, column=0, columnspan=2, sticky="nsew")
         frame.columnconfigure(1, weight=1)
 
         for row, param in enumerate(SDR_PARAMETER_DEFS):
@@ -354,6 +400,8 @@ class SurveyApp(tk.Tk):
                 self._restart_gps_source()
                 self._reconfigure_level_meter()
                 self._sync_logger_state()
+            else:
+                self._update_calibration_status()
             self.status_var.set("Settings applied")
         except Exception as exc:
             self.status_var.set(f"Settings not applied: {exc}")
@@ -491,6 +539,7 @@ class SurveyApp(tk.Tk):
             "spectrum_y_max_dbm": self._last_valid_spectrum_y_max,
             "spectrum_y_min_dbm": self._last_valid_spectrum_y_min,
             "spectrum_averages": self._last_valid_spectrum_averages,
+            "compression_input_dbm": self.calibration_compression_var.get(),
         }
         settings.update(self._collect_sdr_display_params())
         self._settings = settings
@@ -518,6 +567,7 @@ class SurveyApp(tk.Tk):
             self._level_meter.update_settings(params)
             self._last_measurement_signature = measurement_signature
             self._refresh_sdr_status()
+            self._update_calibration_status()
             return
 
         if self._level_meter is not None:
@@ -528,6 +578,7 @@ class SurveyApp(tk.Tk):
         self._active_sdr_backend = backend
         self._last_measurement_signature = measurement_signature
         self._refresh_sdr_status()
+        self._update_calibration_status()
 
     def _measurement_signature(self, params: dict[str, object]) -> tuple[object, ...]:
         return (
@@ -547,6 +598,78 @@ class SurveyApp(tk.Tk):
         if diagnostics.warnings:
             applied = f"{applied} | Warnings: {'; '.join(diagnostics.warnings)}"
         self.sdr_status_var.set(applied)
+        self._update_calibration_status()
+
+    def _new_calibration(self) -> None:
+        try:
+            self._format_frequency_field()
+            if not self._validate_sdr_fields():
+                return
+            metadata = self._collect_calibration_metadata()
+        except Exception as exc:
+            self.status_var.set(f"Calibration not started: {exc}")
+            return
+        self._calibration = new_vhf_broadcast_profile(metadata)
+        save_calibration(self._calibration)
+        self.status_var.set("New VHF calibration started")
+        self._update_calibration_status()
+
+    def _capture_calibration_point(self) -> None:
+        if self._level_meter is None:
+            self.status_var.set("Start the survey before capturing calibration points")
+            return
+        if self._calibration is None:
+            self._new_calibration()
+            if self._calibration is None:
+                return
+        label = self.calibration_point_var.get()
+        try:
+            measured = self._level_meter.read_level_dbm()
+            input_dbm = self._calibration_target_for_label(label)
+        except Exception as exc:
+            self.status_var.set(f"Calibration point not captured: {exc}")
+            return
+        point = CalibrationPoint(label=label, input_dbm=input_dbm, measured_dbm=measured)
+        self._calibration = self._calibration.upsert_point(point)
+        save_calibration(self._calibration)
+        self.status_var.set(f"Captured {label}: measured {measured:.2f} dBm")
+        self._update_calibration_status()
+
+    def _calibration_target_for_label(self, label: str) -> float | None:
+        if label == "1 dB compression":
+            return float(self.calibration_compression_var.get())
+        for target_label, target in CALIBRATION_TARGETS:
+            if target_label == label:
+                return target
+        return None
+
+    def _collect_calibration_metadata(self) -> dict[str, object]:
+        metadata = self._collect_sdr_display_params()
+        metadata["center_frequency_mhz"] = round(float(metadata.get("center_frequency_mhz", 0.0)), 6)
+        return metadata
+
+    def _update_calibration_status(self) -> None:
+        if not hasattr(self, "calibration_status_var"):
+            return
+        if self._calibration is None:
+            self._calibration_valid = False
+            self.calibration_status_var.set("No calibration loaded")
+            self.calibration_status_label.configure(fg="#555555")
+            return
+        mismatches = self._calibration.metadata_mismatches(self._collect_calibration_metadata())
+        point_count = len(self._calibration.points)
+        if mismatches:
+            self._calibration_valid = False
+            self.calibration_status_var.set(
+                f"Calibration mismatch: {', '.join(mismatches[:4])}"
+                + ("..." if len(mismatches) > 4 else "")
+            )
+            self.calibration_status_label.configure(fg="#b00020")
+        else:
+            self._calibration_valid = self._calibration.has_points(tuple(label for label, _target in CALIBRATION_TARGETS))
+            state = "active" if self._calibration_valid else "loaded"
+            self.calibration_status_var.set(f"Calibration {state}: {point_count}/6 points")
+            self.calibration_status_label.configure(fg="#222222")
 
     def _toggle_logging(self) -> None:
         self._sync_logger_state()
@@ -685,7 +808,8 @@ class SurveyApp(tk.Tk):
         if not isinstance(fix, GpsFix) or self._level_meter is None:
             return
         try:
-            level = self._level_meter.read_level_dbm()
+            raw_level = self._level_meter.read_level_dbm()
+            level = self._apply_calibration(raw_level)
             if self.logging_enabled_var.get() and self._logger is not None:
                 self._logger.write(fix, level)
         except Exception as exc:
@@ -822,7 +946,7 @@ class SurveyApp(tk.Tk):
             return
 
         averages = self._last_valid_spectrum_averages
-        powers = tuple(float(value) for value in spectrum.powers_dbm)
+        powers = tuple(self._apply_calibration(float(value)) for value in spectrum.powers_dbm)
         if (
             self._spectrum_average_powers is None
             or self._spectrum_average_frequencies != spectrum.frequencies_mhz
@@ -842,6 +966,11 @@ class SurveyApp(tk.Tk):
     def _on_close(self) -> None:
         self._cleanup()
         self.destroy()
+
+    def _apply_calibration(self, measured_dbm: float) -> float:
+        if self._calibration_valid and self._calibration is not None:
+            return self._calibration.apply(measured_dbm)
+        return measured_dbm
 
 
 def main() -> None:

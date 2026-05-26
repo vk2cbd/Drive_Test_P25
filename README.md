@@ -1,6 +1,6 @@
 # Radio Network Survey Logger
 
-Version: `0.3.5-alpha`
+Version: `0.4.0-beta`
 
 Python GUI application for surveying a radio network with:
 
@@ -57,6 +57,25 @@ The spectrum display sits to the left of the received-level plot. Its frequency 
 The received-level plot now uses the **Power meas BW** field, in kHz, to measure channel power around the configured center frequency instead of always using the full SDR bandwidth. The effective measurement bandwidth is capped by the configured sample rate and IF bandwidth, and the app shows both requested and effective bandwidth in the **SDR applied** status line. This usually makes a narrow signal-generator carrier much easier to see. The value is still relative until calibrated with **dBm calibration offset**.
 
 Changing the plot time window or SDR parameters only changes newly plotted samples. It does not delete the in-memory display history for the current app session, so parameter changes can be compared on the same trace.
+
+## VHF Calibration
+
+The beta calibration workflow stores one VHF broadcast calibration profile at:
+
+```text
+~/.config/radio_survey/calibration_vhf_100mhz.json
+```
+
+Set the GUI to the exact SDR settings you want to calibrate, start the survey, then click **New VHF 100 MHz cal**. This records the current SDR GUI settings as calibration metadata. Select each calibration point and click **Capture point** while the Agilent generator is set accordingly:
+
+- Noise floor, with no signal input
+- `-100 dBm`
+- `-80 dBm`
+- `-60 dBm`
+- `-40 dBm`
+- `1 dB compression`, with the generator level entered in **Compression dBm**
+
+The app interpolates or extrapolates between the signal-level calibration points and applies the correction to the received level, CSV log, and spectrum display. If any current SDR GUI setting differs from the stored calibration metadata, the calibration status text turns red and the calibration is not applied until the settings match again.
 
 ## Ubuntu GPS Setup
 
