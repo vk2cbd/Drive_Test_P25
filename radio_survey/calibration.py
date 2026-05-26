@@ -8,6 +8,8 @@ from typing import Any
 
 
 CALIBRATION_PATH = Path.home() / ".config" / "radio_survey" / "calibration_vhf_100mhz.json"
+VHF_BROADCAST_MIN_MHZ = 88.0
+VHF_BROADCAST_MAX_MHZ = 108.0
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,9 @@ class CalibrationProfile:
         mismatches: list[str] = []
         for key, expected in self.metadata.items():
             actual = current.get(key)
+            if key == "center_frequency_mhz" and self.name.startswith("VHF broadcast"):
+                if _frequency_in_range(actual, VHF_BROADCAST_MIN_MHZ, VHF_BROADCAST_MAX_MHZ):
+                    continue
             if not _values_match(expected, actual):
                 mismatches.append(key)
         return tuple(mismatches)
@@ -137,3 +142,11 @@ def _values_match(expected: object, actual: object) -> bool:
         return abs(float(expected) - float(actual)) <= 1e-6
     except (TypeError, ValueError):
         return str(expected) == str(actual)
+
+
+def _frequency_in_range(value: object, minimum_mhz: float, maximum_mhz: float) -> bool:
+    try:
+        frequency_mhz = float(value)
+    except (TypeError, ValueError):
+        return False
+    return minimum_mhz <= frequency_mhz <= maximum_mhz

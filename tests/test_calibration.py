@@ -21,8 +21,11 @@ def test_calibration_interpolates_and_extrapolates() -> None:
 def test_calibration_metadata_mismatch() -> None:
     profile = new_vhf_broadcast_profile({"center_frequency_mhz": 100.0, "antenna": "A", "fm_notch": False})
 
-    assert profile.metadata_mismatches({"center_frequency_mhz": 100.0, "antenna": "A", "fm_notch": False}) == ()
-    assert profile.metadata_mismatches({"center_frequency_mhz": 101.0, "antenna": "A", "fm_notch": False}) == ("center_frequency_mhz",)
+    assert profile.metadata_mismatches({"center_frequency_mhz": 88.0, "antenna": "A", "fm_notch": False}) == ()
+    assert profile.metadata_mismatches({"center_frequency_mhz": 108.0, "antenna": "A", "fm_notch": False}) == ()
+    assert profile.metadata_mismatches({"center_frequency_mhz": 87.99, "antenna": "A", "fm_notch": False}) == ("center_frequency_mhz",)
+    assert profile.metadata_mismatches({"center_frequency_mhz": 108.01, "antenna": "A", "fm_notch": False}) == ("center_frequency_mhz",)
+    assert profile.metadata_mismatches({"center_frequency_mhz": 100.0, "antenna": "B", "fm_notch": False}) == ("antenna",)
 
 
 def test_calibration_upsert_replaces_point() -> None:

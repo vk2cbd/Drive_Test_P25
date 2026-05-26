@@ -75,7 +75,7 @@ Set the GUI to the exact SDR settings you want to calibrate, start the survey, t
 - `-40 dBm`
 - `1 dB compression`, with the generator level entered in **Compression dBm**
 
-The app interpolates or extrapolates between the signal-level calibration points and applies the correction to the received level, CSV log, and spectrum display. If any current SDR GUI setting differs from the stored calibration metadata, the calibration status text turns red and the calibration is not applied until the settings match again.
+The app interpolates or extrapolates between the signal-level calibration points and applies the correction to the received level, CSV log, and spectrum display. For this VHF broadcast profile, centre frequency remains valid anywhere from 88 to 108 MHz. If any other current SDR GUI setting differs from the stored calibration metadata, or if centre frequency is outside that range, the calibration status text turns red and the calibration is not applied until the settings match again.
 
 ## Ubuntu GPS Setup
 
