@@ -123,7 +123,7 @@ class SoapySdrplayLevelMeter:
         self._center_frequency_hz = float(params["center_frequency_hz"])
         self._sample_rate_hz = float(params["sample_rate_hz"])
         self._bandwidth_hz = float(params["bandwidth_hz"])
-        self._measurement_bandwidth_hz = float(params.get("measurement_bandwidth_hz", 25.0)) * 1_000.0
+        self._measurement_bandwidth_hz = _measurement_bandwidth_param_hz(params, 25_000.0)
         self._last_level_dbm = None
         self._last_spectrum = None
         self._sample_counter = 0
@@ -167,7 +167,7 @@ class SoapySdrplayLevelMeter:
         self._bandwidth_hz = float(params["bandwidth_hz"])
         self._samples_per_level = int(params.get("samples_per_level", self._samples_per_level))
         self._dbm_offset = float(params.get("dbm_offset", self._dbm_offset))
-        self._measurement_bandwidth_hz = float(params.get("measurement_bandwidth_hz", self._measurement_bandwidth_hz / 1_000.0)) * 1_000.0
+        self._measurement_bandwidth_hz = _measurement_bandwidth_param_hz(params, self._measurement_bandwidth_hz)
         with self._condition:
             self._last_level_dbm = None
             self._last_spectrum = None
@@ -502,3 +502,11 @@ def _setting_value(value: object) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
+
+
+def _measurement_bandwidth_param_hz(params: dict[str, object], default_hz: float) -> float:
+    if "measurement_bandwidth_khz" in params:
+        return float(params["measurement_bandwidth_khz"]) * 1_000.0
+    if "measurement_bandwidth_hz" in params:
+        return float(params["measurement_bandwidth_hz"])
+    return default_hz

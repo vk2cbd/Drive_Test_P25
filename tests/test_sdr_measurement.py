@@ -3,6 +3,7 @@ import math
 import numpy as np
 
 from radio_survey.sdr import SoapySdrplayLevelMeter
+from radio_survey.sdr import _measurement_bandwidth_param_hz
 
 
 def _meter_for_bandwidth(measurement_bandwidth_hz: float) -> SoapySdrplayLevelMeter:
@@ -47,3 +48,8 @@ def test_channel_power_1_to_100_khz_noise_delta() -> None:
     wide = wide_meter._measure_channel_power(samples)
 
     assert abs((wide - narrow) - 20.0) <= 2.0
+
+
+def test_measurement_bandwidth_uses_gui_khz_parameter() -> None:
+    assert _measurement_bandwidth_param_hz({"measurement_bandwidth_khz": 100.0}, 25_000.0) == 100_000.0
+    assert _measurement_bandwidth_param_hz({"measurement_bandwidth_khz": 1.0}, 25_000.0) == 1_000.0
