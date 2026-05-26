@@ -26,4 +26,5 @@ def test_parse_rmc_sentence_with_date() -> None:
 def test_decimal_to_dms() -> None:
     assert decimal_to_dms(-33.8688, latitude=True).endswith("S")
     assert decimal_to_dms(151.2093, latitude=False).endswith("E")
-
+    assert decimal_to_dms(-33.8688, latitude=True) == "33:52:08S"
+    assert decimal_to_dms(151.2093, latitude=False) == "151:12:33E"

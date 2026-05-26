@@ -110,8 +110,14 @@ def decimal_to_dms(value: float, latitude: bool) -> str:
     degrees = int(absolute)
     minutes_float = (absolute - degrees) * 60.0
     minutes = int(minutes_float)
-    seconds = (minutes_float - minutes) * 60.0
-    return f"{degrees:02d}:{minutes:02d}:{seconds:06.3f}{hemisphere}"
+    seconds = int(round((minutes_float - minutes) * 60.0))
+    if seconds >= 60:
+        seconds = 0
+        minutes += 1
+    if minutes >= 60:
+        minutes = 0
+        degrees += 1
+    return f"{degrees:02d}:{minutes:02d}:{seconds:02d}{hemisphere}"
 
 
 def _safe_float(value: str) -> float | None:
@@ -126,4 +132,3 @@ def _safe_int(value: str) -> int | None:
         return int(value)
     except ValueError:
         return None
-

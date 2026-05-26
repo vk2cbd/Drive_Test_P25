@@ -299,9 +299,6 @@ class SurveyApp(tk.Tk):
         ):
             ttk.Label(frame, text=label).grid(row=0, column=column, sticky="w")
             ttk.Label(frame, textvariable=var, font=("TkDefaultFont", 11, "bold")).grid(row=1, column=column, sticky="w")
-        ttk.Label(frame, text="SDR applied").grid(row=2, column=0, sticky="w", pady=(8, 0))
-        ttk.Label(frame, textvariable=self.sdr_status_var, wraplength=760).grid(row=2, column=1, columnspan=3, sticky="w", pady=(8, 0))
-
     def _build_plot_panel(self, parent: ttk.Frame) -> None:
         ttk.Label(parent, text="Spectrum (dBm)").grid(row=1, column=0, sticky="w", pady=(10, 2))
         ttk.Label(parent, text="Received Level (dBm)").grid(row=1, column=1, sticky="w", pady=(10, 2), padx=(10, 0))
@@ -909,10 +906,10 @@ class SurveyApp(tk.Tk):
 
         for fraction in (0.0, 0.25, 0.5, 0.75, 1.0):
             y = margin_top + plot_h * fraction
-            canvas.create_line(margin_left, y, width - margin_right, y, fill="#202a33")
+            canvas.create_line(margin_left, y, width - margin_right, y, fill="#8fa2b3")
         for fraction in (0.25, 0.5, 0.75):
             x = margin_left + plot_w * fraction
-            canvas.create_line(x, margin_top, x, height - margin_bottom, fill="#202a33")
+            canvas.create_line(x, margin_top, x, height - margin_bottom, fill="#8fa2b3")
 
         if not self._points:
             self._last_plot_bounds = None
