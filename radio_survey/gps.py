@@ -64,8 +64,7 @@ class SerialGpsSource:
         while not self._stop_event.is_set():
             try:
                 with serial.Serial(self.port, self.baud, timeout=1.0) as ser:
-                    on_error(f"GPS connected on {self.port}; waiting for valid position")
-                    self._read_loop(ser, on_fix, on_error)
+                    self._read_loop(ser, on_fix)
             except serial.SerialException as exc:
                 on_error(
                     "GPS serial read failed. Check that the GPS is still plugged in and that "
@@ -76,15 +75,10 @@ class SerialGpsSource:
                 on_error(f"GPS error: {exc}. On Ubuntu, check the port path and dialout group permissions.")
                 self._stop_event.wait(2.0)
 
-    def _read_loop(self, ser: object, on_fix: FixCallback, on_error: ErrorCallback) -> None:
-        last_waiting_message_s = 0.0
+    def _read_loop(self, ser: object, on_fix: FixCallback) -> None:
         while not self._stop_event.is_set():
             raw_bytes = ser.readline()
             if not raw_bytes:
-                now = time.monotonic()
-                if now - last_waiting_message_s >= 5.0:
-                    on_error(f"GPS connected on {self.port}; waiting for NMEA position")
-                    last_waiting_message_s = now
                 continue
             for raw in raw_bytes.decode("ascii", errors="ignore").splitlines():
                 raw = raw.strip()
@@ -92,11 +86,6 @@ class SerialGpsSource:
                     fix = parse_nmea(raw)
                     if fix is not None:
                         on_fix(fix)
-                    else:
-                        now = time.monotonic()
-                        if now - last_waiting_message_s >= 5.0:
-                            on_error(f"GPS connected on {self.port}; waiting for valid position")
-                            last_waiting_message_s = now
 
 
 class SimulatedGpsSource:

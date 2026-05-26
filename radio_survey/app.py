@@ -399,10 +399,10 @@ class SurveyApp(tk.Tk):
         self._running = True
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
-        self.position_var.set("Waiting for GPS fix")
+        self.position_var.set("No fix")
         self.timestamp_var.set("-")
         self.level_var.set("-")
-        self.status_var.set("Waiting for valid GPS position")
+        self.status_var.set("Running")
 
     def _stop(self) -> None:
         self._cleanup()
