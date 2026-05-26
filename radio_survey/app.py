@@ -68,6 +68,11 @@ class SurveyApp(tk.Tk):
         self._spectrum_average_frequencies: tuple[float, ...] | None = None
         self._calibration: CalibrationProfile | None = load_calibration()
         self._calibration_valid = False
+        self._plot_right_edge_s: float | None = None
+        self._plot_zoom: tuple[float, float, float, float] | None = None
+        self._plot_drag_start: tuple[float, float] | None = None
+        self._plot_drag_rect: int | None = None
+        self._last_plot_bounds: tuple[float, float, float, float, float, float, float, float] | None = None
         self._running = False
         self._last_measurement_signature: tuple[object, ...] | None = None
 
@@ -145,14 +150,6 @@ class SurveyApp(tk.Tk):
         csv_entry.bind("<Return>", lambda _event: self._commit_all_settings())
         csv_entry.bind("<KP_Enter>", lambda _event: self._commit_all_settings())
         ttk.Button(frame, text="Browse", command=self._browse_csv).grid(row=3, column=2, sticky="e")
-
-        self.window_minutes_var = tk.IntVar(value=int(self._settings.get("plot_window_minutes", 10)))
-        ttk.Label(frame, text="Plot window").grid(row=4, column=0, sticky="w")
-        ttk.Scale(frame, from_=1, to=60, variable=self.window_minutes_var, command=lambda _v: self._commit_plot_window()).grid(row=4, column=1, sticky="ew", padx=4)
-        window_spinbox = ttk.Spinbox(frame, from_=1, to=60, textvariable=self.window_minutes_var, width=5, command=self._commit_plot_window)
-        window_spinbox.grid(row=4, column=2, sticky="e")
-        window_spinbox.bind("<Return>", lambda _event: self._commit_plot_window())
-        window_spinbox.bind("<KP_Enter>", lambda _event: self._commit_plot_window())
 
         self.start_button = ttk.Button(frame, text="Start", command=self._start)
         self.start_button.grid(row=5, column=0, sticky="ew", pady=(8, 0))
@@ -296,6 +293,21 @@ class SurveyApp(tk.Tk):
         self.canvas = tk.Canvas(parent, background="#101418", highlightthickness=0)
         self.canvas.grid(row=2, column=1, sticky="nsew", padx=(10, 0))
         self.canvas.bind("<Configure>", lambda _event: self._redraw_plot())
+        self.canvas.bind("<ButtonPress-1>", self._plot_drag_start_event)
+        self.canvas.bind("<B1-Motion>", self._plot_drag_motion_event)
+        self.canvas.bind("<ButtonRelease-1>", self._plot_drag_release_event)
+
+        controls = ttk.Frame(parent)
+        controls.grid(row=3, column=1, sticky="ew", padx=(10, 0), pady=(6, 0))
+        controls.columnconfigure(1, weight=1)
+        self.window_minutes_var = tk.IntVar(value=int(self._settings.get("plot_window_minutes", 10)))
+        ttk.Label(controls, text="Plot window").grid(row=0, column=0, sticky="w")
+        ttk.Scale(controls, from_=1, to=60, variable=self.window_minutes_var, command=lambda _v: self._commit_plot_window()).grid(row=0, column=1, sticky="ew", padx=4)
+        window_spinbox = ttk.Spinbox(controls, from_=1, to=60, textvariable=self.window_minutes_var, width=5, command=self._commit_plot_window)
+        window_spinbox.grid(row=0, column=2, sticky="e")
+        window_spinbox.bind("<Return>", lambda _event: self._commit_plot_window())
+        window_spinbox.bind("<KP_Enter>", lambda _event: self._commit_plot_window())
+        ttk.Button(controls, text="Home", command=self._home_plot_zoom).grid(row=0, column=3, sticky="e", padx=(6, 0))
 
     def _make_var(self, param: ParameterDef) -> tk.Variable:
         value = self._settings.get(param.key, self._legacy_setting_value(param))
@@ -376,6 +388,8 @@ class SurveyApp(tk.Tk):
         self.stop_button.configure(state="disabled")
         self.status_var.set("Stopped")
         self.sdr_status_var.set("SDR not started")
+        self._plot_right_edge_s = time.time()
+        self._redraw_plot()
 
     def _cleanup(self) -> None:
         if self._gps_source is not None:
@@ -407,6 +421,7 @@ class SurveyApp(tk.Tk):
             self.status_var.set(f"Settings not applied: {exc}")
 
     def _commit_plot_window(self) -> None:
+        self._plot_zoom = None
         self._redraw_plot()
         self._settings["plot_window_minutes"] = int(self.window_minutes_var.get())
         save_settings(self._settings)
@@ -819,7 +834,10 @@ class SurveyApp(tk.Tk):
         self.position_var.set(fix.position_dms)
         self.timestamp_var.set(_format_local_time(fix.timestamp_utc))
         self.level_var.set(f"{level:.2f} dBm")
-        self._points.append(LevelPoint(time.time(), level))
+        point_time = time.time()
+        self._points.append(LevelPoint(point_time, level))
+        if self._plot_zoom is None:
+            self._plot_right_edge_s = point_time
         self._update_spectrum_average()
         self._redraw_spectrum()
         self._redraw_plot()
@@ -845,25 +863,28 @@ class SurveyApp(tk.Tk):
             canvas.create_line(margin_left, y, width - margin_right, y, fill="#202a33")
 
         if not self._points:
+            self._last_plot_bounds = None
             canvas.create_text(width / 2, height / 2, text="Waiting for GPS fixes", fill="#b7c0c9", font=("TkDefaultFont", 13))
             return
 
-        now = time.time()
-        window_s = int(self.window_minutes_var.get()) * 60
-        visible = [point for point in self._points if point.epoch_s >= now - window_s]
+        x_min, x_max, low, high = self._current_plot_view()
+        visible = [point for point in self._points if x_min <= point.epoch_s <= x_max]
         if not visible:
+            self._last_plot_bounds = (margin_left, margin_top, plot_w, plot_h, x_min, x_max, low, high)
             return
 
-        if self.autoscale_y_var.get():
+        if self._plot_zoom is None and self.autoscale_y_var.get():
             min_level = min(point.level_dbm for point in visible)
             max_level = max(point.level_dbm for point in visible)
             span = max(max_level - min_level, 10.0)
             low = min_level - (span * 0.1)
             high = max_level + (span * 0.1)
-        else:
+        elif self._plot_zoom is None:
             self._apply_y_axis_fields()
             low = self._last_valid_y_min
             high = self._last_valid_y_max
+
+        self._last_plot_bounds = (margin_left, margin_top, plot_w, plot_h, x_min, x_max, low, high)
 
         for label_value in (low, (low + high) / 2, high):
             y = margin_top + (high - label_value) / (high - low) * plot_h
@@ -871,7 +892,7 @@ class SurveyApp(tk.Tk):
 
         coords: list[float] = []
         for point in visible:
-            x = margin_left + (point.epoch_s - (now - window_s)) / window_s * plot_w
+            x = margin_left + (point.epoch_s - x_min) / max(x_max - x_min, 1e-6) * plot_w
             y = margin_top + (high - point.level_dbm) / (high - low) * plot_h
             coords.extend((x, y))
 
@@ -879,8 +900,90 @@ class SurveyApp(tk.Tk):
             canvas.create_line(*coords, fill="#5cc8ff", width=2, smooth=True)
         x, y = coords[-2], coords[-1]
         canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill="#ffffff", outline="#5cc8ff")
-        canvas.create_text(margin_left, height - 16, text=f"-{self.window_minutes_var.get()} min", fill="#b7c0c9", anchor="w")
-        canvas.create_text(width - margin_right, height - 16, text="now", fill="#b7c0c9", anchor="e")
+        canvas.create_text(margin_left, height - 16, text=_format_axis_time(x_min), fill="#b7c0c9", anchor="w")
+        canvas.create_text(width - margin_right, height - 16, text=_format_axis_time(x_max), fill="#b7c0c9", anchor="e")
+
+    def _current_plot_view(self) -> tuple[float, float, float, float]:
+        if self._plot_zoom is not None:
+            return self._plot_zoom
+        right_edge = self._plot_right_edge_s or self._points[-1].epoch_s
+        window_s = max(60, int(self.window_minutes_var.get()) * 60)
+        x_min = right_edge - window_s
+        x_max = right_edge
+        self._apply_y_axis_fields()
+        return x_min, x_max, self._last_valid_y_min, self._last_valid_y_max
+
+    def _home_plot_zoom(self) -> None:
+        if not self._points:
+            self._plot_zoom = None
+            self._redraw_plot()
+            return
+        x_values = [point.epoch_s for point in self._points]
+        y_values = [point.level_dbm for point in self._points]
+        x_min = min(x_values)
+        x_max = max(x_values)
+        if x_max <= x_min:
+            x_max = x_min + 1.0
+        y_min = min(y_values)
+        y_max = max(y_values)
+        y_span = max(y_max - y_min, 10.0)
+        self._plot_zoom = (x_min, x_max, y_min - y_span * 0.1, y_max + y_span * 0.1)
+        self._redraw_plot()
+
+    def _plot_drag_start_event(self, event: tk.Event) -> None:
+        if self._last_plot_bounds is None:
+            return
+        x = self._clamp_plot_x(float(event.x))
+        y = self._clamp_plot_y(float(event.y))
+        self._plot_drag_start = (x, y)
+        if self._plot_drag_rect is not None:
+            self.canvas.delete(self._plot_drag_rect)
+        self._plot_drag_rect = self.canvas.create_rectangle(x, y, x, y, outline="#ffffff", dash=(3, 2))
+
+    def _plot_drag_motion_event(self, event: tk.Event) -> None:
+        if self._plot_drag_start is None or self._plot_drag_rect is None:
+            return
+        x0, y0 = self._plot_drag_start
+        x1 = self._clamp_plot_x(float(event.x))
+        y1 = self._clamp_plot_y(float(event.y))
+        self.canvas.coords(self._plot_drag_rect, x0, y0, x1, y1)
+
+    def _plot_drag_release_event(self, event: tk.Event) -> None:
+        if self._plot_drag_start is None or self._last_plot_bounds is None:
+            return
+        x0, y0 = self._plot_drag_start
+        x1 = self._clamp_plot_x(float(event.x))
+        y1 = self._clamp_plot_y(float(event.y))
+        if self._plot_drag_rect is not None:
+            self.canvas.delete(self._plot_drag_rect)
+        self._plot_drag_start = None
+        self._plot_drag_rect = None
+        if abs(x1 - x0) < 8 or abs(y1 - y0) < 8:
+            return
+        self._plot_zoom = self._pixel_rect_to_plot_range(x0, y0, x1, y1)
+        self._redraw_plot()
+
+    def _clamp_plot_x(self, value: float) -> float:
+        if self._last_plot_bounds is None:
+            return value
+        margin_left, _margin_top, plot_w, _plot_h, *_rest = self._last_plot_bounds
+        return min(margin_left + plot_w, max(margin_left, value))
+
+    def _clamp_plot_y(self, value: float) -> float:
+        if self._last_plot_bounds is None:
+            return value
+        _margin_left, margin_top, _plot_w, plot_h, *_rest = self._last_plot_bounds
+        return min(margin_top + plot_h, max(margin_top, value))
+
+    def _pixel_rect_to_plot_range(self, x0: float, y0: float, x1: float, y1: float) -> tuple[float, float, float, float]:
+        margin_left, margin_top, plot_w, plot_h, x_min, x_max, y_min, y_max = self._last_plot_bounds
+        left_px, right_px = sorted((x0, x1))
+        top_px, bottom_px = sorted((y0, y1))
+        new_x_min = x_min + (left_px - margin_left) / plot_w * (x_max - x_min)
+        new_x_max = x_min + (right_px - margin_left) / plot_w * (x_max - x_min)
+        new_y_max = y_max - (top_px - margin_top) / plot_h * (y_max - y_min)
+        new_y_min = y_max - (bottom_px - margin_top) / plot_h * (y_max - y_min)
+        return new_x_min, new_x_max, new_y_min, new_y_max
 
     def _redraw_spectrum(self) -> None:
         canvas = self.spectrum_canvas
@@ -980,3 +1083,7 @@ def main() -> None:
 
 def _format_local_time(timestamp_utc: datetime) -> str:
     return timestamp_utc.astimezone().strftime("%H:%M:%S %Z")
+
+
+def _format_axis_time(epoch_s: float) -> str:
+    return datetime.fromtimestamp(epoch_s).strftime("%H:%M:%S")

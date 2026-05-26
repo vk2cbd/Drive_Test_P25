@@ -1,6 +1,6 @@
 # Radio Network Survey Logger
 
-Version: `0.4.0-beta`
+Version: `0.4.1-beta`
 
 Python GUI application for surveying a radio network with:
 
@@ -56,7 +56,7 @@ The spectrum display sits to the left of the received-level plot. Its frequency 
 
 The received-level plot now uses the **Power meas BW** field, in kHz, to measure channel power around the configured center frequency instead of always using the full SDR bandwidth. The effective measurement bandwidth is capped by the configured sample rate and IF bandwidth, and the app shows both requested and effective bandwidth in the **SDR applied** status line. This usually makes a narrow signal-generator carrier much easier to see. The value is still relative until calibrated with **dBm calibration offset**.
 
-Changing the plot time window or SDR parameters only changes newly plotted samples. It does not delete the in-memory display history for the current app session, so parameter changes can be compared on the same trace.
+Changing the plot time window or SDR parameters only changes newly plotted samples. It does not delete the in-memory display history for the current app session, so parameter changes can be compared on the same trace. The plot window control sits below the received-level plot. The received-level plot advances only when GPS fixes add new samples, can be zoomed by dragging a rectangle with the mouse, and the **Home** button returns to a view containing all collected samples.
 
 ## VHF Calibration
 
