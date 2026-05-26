@@ -112,17 +112,20 @@ class SurveyApp(tk.Tk):
         self.gps_port_combo.grid(row=1, column=1, sticky="ew", padx=4)
         self.gps_port_combo.bind("<<ComboboxSelected>>", lambda _event: self._commit_all_settings())
         self.gps_port_combo.bind("<Return>", lambda _event: self._commit_all_settings())
+        self.gps_port_combo.bind("<KP_Enter>", lambda _event: self._commit_all_settings())
         ttk.Button(frame, text="Refresh", command=self._refresh_gps_ports).grid(row=1, column=2, sticky="e")
         ttk.Label(frame, text="Baud").grid(row=2, column=0, sticky="w")
         gps_baud_entry = ttk.Entry(frame, textvariable=self.gps_baud_var, width=12)
         gps_baud_entry.grid(row=2, column=1, sticky="ew", padx=4)
         gps_baud_entry.bind("<Return>", lambda _event: self._commit_all_settings())
+        gps_baud_entry.bind("<KP_Enter>", lambda _event: self._commit_all_settings())
 
         self.csv_path_var = tk.StringVar(value=str(self._settings.get("csv_path", Path.home() / "radio_survey_logs" / "survey_log.csv")))
         ttk.Label(frame, text="CSV file").grid(row=3, column=0, sticky="w")
         csv_entry = ttk.Entry(frame, textvariable=self.csv_path_var, width=32)
         csv_entry.grid(row=3, column=1, sticky="ew", padx=4)
         csv_entry.bind("<Return>", lambda _event: self._commit_all_settings())
+        csv_entry.bind("<KP_Enter>", lambda _event: self._commit_all_settings())
         ttk.Button(frame, text="Browse", command=self._browse_csv).grid(row=3, column=2, sticky="e")
 
         self.window_minutes_var = tk.IntVar(value=int(self._settings.get("plot_window_minutes", 10)))
@@ -131,6 +134,7 @@ class SurveyApp(tk.Tk):
         window_spinbox = ttk.Spinbox(frame, from_=1, to=60, textvariable=self.window_minutes_var, width=5, command=self._commit_plot_window)
         window_spinbox.grid(row=4, column=2, sticky="e")
         window_spinbox.bind("<Return>", lambda _event: self._commit_plot_window())
+        window_spinbox.bind("<KP_Enter>", lambda _event: self._commit_plot_window())
 
         self.start_button = ttk.Button(frame, text="Start", command=self._start)
         self.start_button.grid(row=5, column=0, sticky="ew", pady=(8, 0))
@@ -208,6 +212,9 @@ class SurveyApp(tk.Tk):
             self._last_valid_sdr_values[param.key] = self._coerce_param_value(param, var.get())
             if param.units:
                 ttk.Label(frame, text=param.units).grid(row=row, column=2, sticky="w")
+        ttk.Button(frame, text="Apply SDR settings", command=self._commit_all_settings).grid(
+            row=len(SDR_PARAMETER_DEFS), column=0, columnspan=3, sticky="ew", pady=(8, 0)
+        )
 
     def _build_status_panel(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Realtime Data", padding=10)
@@ -267,10 +274,12 @@ class SurveyApp(tk.Tk):
         if param.kind == "choice":
             widget.bind("<<ComboboxSelected>>", lambda _event: self._commit_all_settings())
             widget.bind("<Return>", lambda _event: self._commit_all_settings())
+            widget.bind("<KP_Enter>", lambda _event: self._commit_all_settings())
         elif param.kind == "bool":
             widget.configure(command=self._commit_all_settings)
         else:
             widget.bind("<Return>", lambda _event: self._commit_all_settings())
+            widget.bind("<KP_Enter>", lambda _event: self._commit_all_settings())
 
     def _browse_csv(self) -> None:
         path = filedialog.asksaveasfilename(
@@ -345,6 +354,7 @@ class SurveyApp(tk.Tk):
                 self._restart_gps_source()
                 self._reconfigure_level_meter()
                 self._sync_logger_state()
+            self.status_var.set("Settings applied")
         except Exception as exc:
             self.status_var.set(f"Settings not applied: {exc}")
 

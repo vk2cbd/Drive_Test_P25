@@ -28,3 +28,22 @@ def test_channel_power_increases_with_measurement_bandwidth_for_noise() -> None:
 
     expected_delta_db = 10.0 * math.log10(8.0)
     assert abs((wide - narrow) - expected_delta_db) <= 1.5
+
+
+def test_channel_power_1_to_100_khz_noise_delta() -> None:
+    rng = np.random.default_rng(5678)
+    samples = (
+        rng.normal(0.0, 1.0, 65536)
+        + 1j * rng.normal(0.0, 1.0, 65536)
+    ).astype(np.complex64)
+    narrow_meter = _meter_for_bandwidth(1_000.0)
+    wide_meter = _meter_for_bandwidth(100_000.0)
+    narrow_meter._sample_rate_hz = 1_000_000.0
+    narrow_meter._bandwidth_hz = 1_536_000.0
+    wide_meter._sample_rate_hz = 1_000_000.0
+    wide_meter._bandwidth_hz = 1_536_000.0
+
+    narrow = narrow_meter._measure_channel_power(samples)
+    wide = wide_meter._measure_channel_power(samples)
+
+    assert abs((wide - narrow) - 20.0) <= 2.0

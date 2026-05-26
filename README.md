@@ -1,6 +1,6 @@
 # Radio Network Survey Logger
 
-Version: `0.3.1-alpha`
+Version: `0.3.2-alpha`
 
 Python GUI application for surveying a radio network with:
 
@@ -43,6 +43,8 @@ Most GUI fields are remembered between app runs in:
 ```
 
 Text and numeric fields are committed when you press Enter in the field. When the survey is running, committed GPS and SDR changes are applied by restarting the affected device path where possible. The center frequency field is entered in MHz with six decimal places.
+
+The SDR panel also has an **Apply SDR settings** button. Use this after editing numeric SDR fields if you are unsure whether the Enter key was captured by the GUI; the **Status** field will show `Settings applied` and **SDR applied** will show the requested and effective power measurement bandwidth.
 
 Sample rate is entered in Msps, and IF bandwidth is entered in MHz. The app converts those values to Hz before configuring the SDR backend.
 
