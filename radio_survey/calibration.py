@@ -7,9 +7,8 @@ from pathlib import Path
 from typing import Any
 
 
-CALIBRATION_PATH = Path.home() / ".config" / "radio_survey" / "calibration_vhf_100mhz.json"
-VHF_BROADCAST_MIN_MHZ = 88.0
-VHF_BROADCAST_MAX_MHZ = 108.0
+CALIBRATION_DIR = Path.home() / ".config" / "radio_survey"
+LEGACY_CALIBRATION_PATH = CALIBRATION_DIR / "calibration_vhf_100mhz.json"
 CALIBRATION_IGNORED_METADATA_KEYS = {
     "antenna",
     "bias_t",
@@ -19,6 +18,49 @@ CALIBRATION_IGNORED_METADATA_KEYS = {
     "mw_notch",
     "tuner",
 }
+
+
+@dataclass(frozen=True)
+class CalibrationBand:
+    key: str
+    label: str
+    minimum_mhz: float
+    maximum_mhz: float
+    file_name: str
+
+    @property
+    def path(self) -> Path:
+        return CALIBRATION_DIR / self.file_name
+
+    def contains(self, value: object) -> bool:
+        try:
+            frequency_mhz = float(value)
+        except (TypeError, ValueError):
+            return False
+        return self.minimum_mhz <= frequency_mhz <= self.maximum_mhz
+
+
+CALIBRATION_BANDS: tuple[CalibrationBand, ...] = (
+    CalibrationBand("vhf_broadcast", "VHF broadcast 88-108 MHz", 88.0, 108.0, "calibration_vhf_broadcast.json"),
+    CalibrationBand("vhf_high", "VHF high 108-174 MHz", 108.0, 174.0, "calibration_vhf_high.json"),
+    CalibrationBand("uhf_low", "UHF low 403-440 MHz", 403.0, 440.0, "calibration_uhf_low.json"),
+    CalibrationBand("uhf_high", "UHF high 440-520 MHz", 440.0, 520.0, "calibration_uhf_high.json"),
+)
+DEFAULT_CALIBRATION_BAND_KEY = "vhf_broadcast"
+
+
+def calibration_band_for_key(key: str) -> CalibrationBand:
+    for band in CALIBRATION_BANDS:
+        if band.key == key:
+            return band
+    return CALIBRATION_BANDS[0]
+
+
+def calibration_band_for_label(label: str) -> CalibrationBand:
+    for band in CALIBRATION_BANDS:
+        if band.label == label:
+            return band
+    return CALIBRATION_BANDS[0]
 
 
 @dataclass(frozen=True)
@@ -34,6 +76,8 @@ class CalibrationProfile:
     created_utc: str
     metadata: dict[str, object]
     points: tuple[CalibrationPoint, ...]
+    band_key: str = DEFAULT_CALIBRATION_BAND_KEY
+    locked: bool = False
 
     @property
     def signal_points(self) -> tuple[CalibrationPoint, ...]:
@@ -68,8 +112,8 @@ class CalibrationProfile:
             if key in CALIBRATION_IGNORED_METADATA_KEYS:
                 continue
             actual = current.get(key)
-            if key == "center_frequency_mhz" and self.name.startswith("VHF broadcast"):
-                if _frequency_in_range(actual, VHF_BROADCAST_MIN_MHZ, VHF_BROADCAST_MAX_MHZ):
+            if key == "center_frequency_mhz":
+                if calibration_band_for_key(self.band_key).contains(actual):
                     continue
             if not _values_match(expected, actual):
                 mismatches.append(key)
@@ -78,12 +122,17 @@ class CalibrationProfile:
     def upsert_point(self, point: CalibrationPoint) -> "CalibrationProfile":
         points = [existing for existing in self.points if existing.label != point.label]
         points.append(point)
-        return CalibrationProfile(self.name, self.created_utc, self.metadata, tuple(points))
+        return CalibrationProfile(self.name, self.created_utc, self.metadata, tuple(points), self.band_key, self.locked)
+
+    def with_locked(self, locked: bool) -> "CalibrationProfile":
+        return CalibrationProfile(self.name, self.created_utc, self.metadata, self.points, self.band_key, locked)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "created_utc": self.created_utc,
+            "band_key": self.band_key,
+            "locked": self.locked,
             "metadata": self.metadata,
             "points": [
                 {
@@ -96,16 +145,27 @@ class CalibrationProfile:
         }
 
 
-def new_vhf_broadcast_profile(metadata: dict[str, object]) -> CalibrationProfile:
+def new_calibration_profile(band_key: str, metadata: dict[str, object]) -> CalibrationProfile:
+    band = calibration_band_for_key(band_key)
     return CalibrationProfile(
-        name="VHF broadcast 100 MHz",
+        name=band.label,
         created_utc=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         metadata=dict(metadata),
         points=(),
+        band_key=band.key,
+        locked=False,
     )
 
 
-def load_calibration(path: Path = CALIBRATION_PATH) -> CalibrationProfile | None:
+def new_vhf_broadcast_profile(metadata: dict[str, object]) -> CalibrationProfile:
+    return new_calibration_profile(DEFAULT_CALIBRATION_BAND_KEY, metadata)
+
+
+def load_calibration(band_key: str = DEFAULT_CALIBRATION_BAND_KEY, path: Path | None = None) -> CalibrationProfile | None:
+    band = calibration_band_for_key(band_key)
+    path = path or band.path
+    if band.key == DEFAULT_CALIBRATION_BAND_KEY and not path.exists() and LEGACY_CALIBRATION_PATH.exists():
+        path = LEGACY_CALIBRATION_PATH
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
@@ -123,16 +183,28 @@ def load_calibration(path: Path = CALIBRATION_PATH) -> CalibrationProfile | None
         if not isinstance(metadata, dict):
             metadata = {}
         return CalibrationProfile(
-            name=str(data.get("name", "VHF broadcast 100 MHz")),
+            name=str(data.get("name", band.label)),
             created_utc=str(data.get("created_utc", "")),
             metadata=metadata,
             points=points,
+            band_key=str(data.get("band_key", band.key)),
+            locked=bool(data.get("locked", False)),
         )
     except (KeyError, TypeError, ValueError):
         return None
 
 
-def save_calibration(profile: CalibrationProfile, path: Path = CALIBRATION_PATH) -> None:
+def load_calibrations() -> dict[str, CalibrationProfile]:
+    profiles: dict[str, CalibrationProfile] = {}
+    for band in CALIBRATION_BANDS:
+        profile = load_calibration(band.key)
+        if profile is not None:
+            profiles[band.key] = profile
+    return profiles
+
+
+def save_calibration(profile: CalibrationProfile, path: Path | None = None) -> None:
+    path = path or calibration_band_for_key(profile.band_key).path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(profile.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -153,11 +225,3 @@ def _values_match(expected: object, actual: object) -> bool:
         return abs(float(expected) - float(actual)) <= 1e-6
     except (TypeError, ValueError):
         return str(expected) == str(actual)
-
-
-def _frequency_in_range(value: object, minimum_mhz: float, maximum_mhz: float) -> bool:
-    try:
-        frequency_mhz = float(value)
-    except (TypeError, ValueError):
-        return False
-    return minimum_mhz <= frequency_mhz <= maximum_mhz

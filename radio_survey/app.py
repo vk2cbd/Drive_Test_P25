@@ -9,7 +9,16 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from . import __version__
-from .calibration import CalibrationPoint, CalibrationProfile, load_calibration, new_vhf_broadcast_profile, save_calibration
+from .calibration import (
+    CALIBRATION_BANDS,
+    CalibrationBand,
+    CalibrationPoint,
+    CalibrationProfile,
+    calibration_band_for_label,
+    load_calibrations,
+    new_calibration_profile,
+    save_calibration,
+)
 from .config import SDR_PARAMETER_DEFS, ParameterDef
 from .gps import SerialGpsSource, SimulatedGpsSource, default_gps_port, discover_gps_ports
 from .logger import CsvSurveyLogger
@@ -75,7 +84,8 @@ class SurveyApp(tk.Tk):
         self._last_valid_spectrum_averages = self._valid_spectrum_averages(self._settings.get("spectrum_averages", 1), 1)
         self._spectrum_average_powers: tuple[float, ...] | None = None
         self._spectrum_average_frequencies: tuple[float, ...] | None = None
-        self._calibration: CalibrationProfile | None = load_calibration()
+        self._calibrations: dict[str, CalibrationProfile] = load_calibrations()
+        self._calibration: CalibrationProfile | None = None
         self._calibration_valid = False
         self._last_valid_plot_window_minutes = self._valid_plot_window_minutes(self._settings.get("plot_window_minutes", 10))
         self._last_autoscale_y = False
@@ -233,9 +243,24 @@ class SurveyApp(tk.Tk):
 
         self.calibration_point_var = tk.StringVar(value=CALIBRATION_TARGETS[1][0])
         self.calibration_compression_var = tk.StringVar(value=str(self._settings.get("compression_input_dbm", "-30.0")))
+        band_labels = [band.label for band in CALIBRATION_BANDS]
+        saved_band_label = str(self._settings.get("calibration_band_label", CALIBRATION_BANDS[0].label))
+        self.calibration_band_var = tk.StringVar(value=saved_band_label if saved_band_label in band_labels else CALIBRATION_BANDS[0].label)
+        self.calibration_locked_var = tk.BooleanVar(value=False)
         self.calibration_status_var = tk.StringVar(value="No calibration loaded")
 
-        ttk.Label(frame, text="Point").grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, text="Band").grid(row=0, column=0, sticky="w")
+        band_combo = ttk.Combobox(
+            frame,
+            textvariable=self.calibration_band_var,
+            values=band_labels,
+            state="readonly",
+            width=24,
+        )
+        band_combo.grid(row=0, column=1, sticky="ew", padx=4)
+        band_combo.bind("<<ComboboxSelected>>", lambda _event: self._select_calibration_band())
+
+        ttk.Label(frame, text="Point").grid(row=1, column=0, sticky="w")
         point_combo = ttk.Combobox(
             frame,
             textvariable=self.calibration_point_var,
@@ -243,19 +268,20 @@ class SurveyApp(tk.Tk):
             state="readonly",
             width=18,
         )
-        point_combo.grid(row=0, column=1, sticky="ew", padx=4)
+        point_combo.grid(row=1, column=1, sticky="ew", padx=4)
 
-        ttk.Label(frame, text="Compression dBm").grid(row=1, column=0, sticky="w")
+        ttk.Label(frame, text="Compression dBm").grid(row=2, column=0, sticky="w")
         compression_entry = ttk.Entry(frame, textvariable=self.calibration_compression_var, width=12)
-        compression_entry.grid(row=1, column=1, sticky="ew", padx=4)
+        compression_entry.grid(row=2, column=1, sticky="ew", padx=4)
         compression_entry.bind("<Return>", lambda _event: self._save_current_settings())
         compression_entry.bind("<KP_Enter>", lambda _event: self._save_current_settings())
 
-        ttk.Button(frame, text="New VHF 100 MHz cal", command=self._new_calibration).grid(row=2, column=0, sticky="ew", pady=(6, 0))
-        ttk.Button(frame, text="Capture point", command=self._capture_calibration_point).grid(row=2, column=1, sticky="ew", padx=4, pady=(6, 0))
+        ttk.Checkbutton(frame, text="Locked", variable=self.calibration_locked_var, command=self._toggle_calibration_lock).grid(row=3, column=0, sticky="w", pady=(6, 0))
+        ttk.Button(frame, text="New band cal", command=self._new_calibration).grid(row=3, column=1, sticky="ew", padx=4, pady=(6, 0))
+        ttk.Button(frame, text="Capture point", command=self._capture_calibration_point).grid(row=4, column=1, sticky="ew", padx=4, pady=(6, 0))
 
         self.calibration_status_label = tk.Label(frame, textvariable=self.calibration_status_var, anchor="w", justify="left", wraplength=360)
-        self.calibration_status_label.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.calibration_status_label.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0))
 
     def _build_sdr_panel(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="SDR Parameters", padding=8)
@@ -625,6 +651,7 @@ class SurveyApp(tk.Tk):
             "spectrum_y_min_dbm": self._last_valid_spectrum_y_min,
             "spectrum_averages": self._last_valid_spectrum_averages,
             "compression_input_dbm": self.calibration_compression_var.get(),
+            "calibration_band_label": self.calibration_band_var.get(),
         }
         settings.update(self._collect_sdr_display_params())
         self._settings = settings
@@ -686,6 +713,12 @@ class SurveyApp(tk.Tk):
         self._update_calibration_status()
 
     def _new_calibration(self) -> None:
+        band = self._selected_calibration_band()
+        existing = self._calibrations.get(band.key)
+        if existing is not None and existing.locked:
+            self.status_var.set("Calibration is locked; unlock before starting a new band calibration")
+            self._update_calibration_status()
+            return
         try:
             self._format_frequency_field()
             if not self._validate_sdr_fields():
@@ -694,9 +727,10 @@ class SurveyApp(tk.Tk):
         except Exception as exc:
             self.status_var.set(f"Calibration not started: {exc}")
             return
-        self._calibration = new_vhf_broadcast_profile(metadata)
+        self._calibration = new_calibration_profile(band.key, metadata)
+        self._calibrations[band.key] = self._calibration
         save_calibration(self._calibration)
-        self.status_var.set("New VHF calibration started")
+        self.status_var.set(f"New {band.label} calibration started")
         self._update_calibration_status()
 
     def _capture_calibration_point(self) -> None:
@@ -707,6 +741,10 @@ class SurveyApp(tk.Tk):
             self._new_calibration()
             if self._calibration is None:
                 return
+        if self._calibration.locked:
+            self.status_var.set("Calibration is locked; unlock before capturing points")
+            self._update_calibration_status()
+            return
         label = self.calibration_point_var.get()
         try:
             measured = self._level_meter.read_level_dbm()
@@ -716,8 +754,38 @@ class SurveyApp(tk.Tk):
             return
         point = CalibrationPoint(label=label, input_dbm=input_dbm, measured_dbm=measured)
         self._calibration = self._calibration.upsert_point(point)
+        self._calibrations[self._calibration.band_key] = self._calibration
         save_calibration(self._calibration)
         self.status_var.set(f"Captured {label}: measured {measured:.2f} dBm")
+        self._update_calibration_status()
+
+    def _selected_calibration_band(self) -> CalibrationBand:
+        return calibration_band_for_label(self.calibration_band_var.get())
+
+    def _select_calibration_band(self) -> None:
+        band = self._selected_calibration_band()
+        self._calibration = self._calibrations.get(band.key)
+        self._settings["calibration_band_label"] = band.label
+        save_settings(self._settings)
+        self._update_calibration_status()
+
+    def _toggle_calibration_lock(self) -> None:
+        band = self._selected_calibration_band()
+        profile = self._calibrations.get(band.key)
+        if profile is None:
+            self.calibration_locked_var.set(False)
+            self.status_var.set("No calibration loaded for this band")
+            return
+        requested = bool(self.calibration_locked_var.get())
+        if profile.locked and not requested:
+            if not messagebox.askyesno("Unlock calibration", f"Unlock {band.label} calibration for editing?"):
+                self.calibration_locked_var.set(True)
+                return
+        profile = profile.with_locked(requested)
+        self._calibrations[band.key] = profile
+        self._calibration = profile
+        save_calibration(profile)
+        self.status_var.set(f"{band.label} calibration {'locked' if requested else 'unlocked'}")
         self._update_calibration_status()
 
     def _calibration_target_for_label(self, label: str) -> float | None:
@@ -736,24 +804,29 @@ class SurveyApp(tk.Tk):
     def _update_calibration_status(self) -> None:
         if not hasattr(self, "calibration_status_var"):
             return
+        band = self._selected_calibration_band()
+        self._calibration = self._calibrations.get(band.key)
         if self._calibration is None:
             self._calibration_valid = False
-            self.calibration_status_var.set("No calibration loaded")
+            self.calibration_locked_var.set(False)
+            self.calibration_status_var.set(f"No {band.label} calibration loaded")
             self.calibration_status_label.configure(fg="#555555")
             return
+        self.calibration_locked_var.set(self._calibration.locked)
         mismatches = self._calibration.metadata_mismatches(self._collect_calibration_metadata())
         point_count = len(self._calibration.points)
         if mismatches:
             self._calibration_valid = False
             self.calibration_status_var.set(
-                f"Calibration mismatch: {', '.join(mismatches[:4])}"
+                f"{band.label} mismatch: {', '.join(mismatches[:4])}"
                 + ("..." if len(mismatches) > 4 else "")
             )
             self.calibration_status_label.configure(fg="#b00020")
         else:
             self._calibration_valid = self._calibration.has_points(tuple(label for label, _target in CALIBRATION_TARGETS))
             state = "active" if self._calibration_valid else "loaded"
-            self.calibration_status_var.set(f"Calibration {state}: {point_count}/6 points")
+            locked = ", locked" if self._calibration.locked else ", unlocked"
+            self.calibration_status_var.set(f"{band.label} calibration {state}: {point_count}/6 points{locked}")
             self.calibration_status_label.configure(fg="#222222")
 
     def _toggle_logging(self) -> None:

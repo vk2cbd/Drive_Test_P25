@@ -1,4 +1,4 @@
-from radio_survey.calibration import CalibrationPoint, CalibrationProfile, new_vhf_broadcast_profile
+from radio_survey.calibration import CalibrationPoint, CalibrationProfile, new_calibration_profile, new_vhf_broadcast_profile
 
 
 def test_calibration_interpolates_and_extrapolates() -> None:
@@ -26,6 +26,30 @@ def test_calibration_metadata_mismatch() -> None:
     assert profile.metadata_mismatches({"center_frequency_mhz": 87.99, "antenna": "A", "fm_notch": False}) == ("center_frequency_mhz",)
     assert profile.metadata_mismatches({"center_frequency_mhz": 108.01, "antenna": "A", "fm_notch": False}) == ("center_frequency_mhz",)
     assert profile.metadata_mismatches({"center_frequency_mhz": 100.0, "antenna": "B", "fm_notch": True}) == ()
+
+
+def test_calibration_band_frequency_ranges() -> None:
+    vhf_high = new_calibration_profile("vhf_high", {"center_frequency_mhz": 146.5})
+    uhf_low = new_calibration_profile("uhf_low", {"center_frequency_mhz": 430.0})
+    uhf_high = new_calibration_profile("uhf_high", {"center_frequency_mhz": 470.0})
+
+    assert vhf_high.metadata_mismatches({"center_frequency_mhz": 108.0}) == ()
+    assert vhf_high.metadata_mismatches({"center_frequency_mhz": 174.0}) == ()
+    assert vhf_high.metadata_mismatches({"center_frequency_mhz": 174.1}) == ("center_frequency_mhz",)
+    assert uhf_low.metadata_mismatches({"center_frequency_mhz": 403.0}) == ()
+    assert uhf_low.metadata_mismatches({"center_frequency_mhz": 440.0}) == ()
+    assert uhf_low.metadata_mismatches({"center_frequency_mhz": 440.1}) == ("center_frequency_mhz",)
+    assert uhf_high.metadata_mismatches({"center_frequency_mhz": 440.0}) == ()
+    assert uhf_high.metadata_mismatches({"center_frequency_mhz": 520.0}) == ()
+    assert uhf_high.metadata_mismatches({"center_frequency_mhz": 520.1}) == ("center_frequency_mhz",)
+
+
+def test_calibration_lock_round_trip() -> None:
+    profile = new_calibration_profile("vhf_high", {})
+    locked = profile.with_locked(True)
+
+    assert locked.locked is True
+    assert locked.band_key == "vhf_high"
 
 
 def test_calibration_ignores_operational_metadata() -> None:

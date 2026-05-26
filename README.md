@@ -1,6 +1,6 @@
 # Radio Network Survey Logger
 
-Version: `0.4.10-beta`
+Version: `0.4.11-beta`
 
 Python GUI application for surveying a radio network with:
 
@@ -60,15 +60,16 @@ If the GPS emits more than one valid position sentence for the same GPS second, 
 
 Changing the plot time window or SDR parameters only changes newly plotted samples. It does not delete the in-memory display history for the current app session, so parameter changes can be compared on the same trace. The plot window control sits below the received-level plot. The received-level plot advances only when GPS fixes add new samples, draws vertical time graticles at 25%, 50%, and 75% of the visible time span, can be zoomed by dragging a visible rectangle with the mouse, and the **Back** button returns to the previous plot view. Returning from a drag zoom to the normal scrolling view allows new GPS samples to scroll the plot again.
 
-## VHF Calibration
+## Calibration
 
-The beta calibration workflow stores one VHF broadcast calibration profile at:
+The beta calibration workflow stores separate calibration profiles for:
 
-```text
-~/.config/radio_survey/calibration_vhf_100mhz.json
-```
+- VHF broadcast 88-108 MHz
+- VHF high 108-174 MHz
+- UHF low 403-440 MHz
+- UHF high 440-520 MHz
 
-Set the GUI to the exact SDR settings you want to calibrate, start the survey, then click **New VHF 100 MHz cal**. This records the current SDR GUI settings as calibration metadata. Select each calibration point and click **Capture point** while the Agilent generator is set accordingly:
+Set the calibration **Band** selector, set the GUI to the exact SDR settings you want to calibrate, start the survey, then click **New band cal**. This records the current SDR GUI settings as calibration metadata for that band. Select each calibration point and click **Capture point** while the Agilent generator is set accordingly:
 
 - Noise floor, with no signal input
 - `-100 dBm`
@@ -77,7 +78,9 @@ Set the GUI to the exact SDR settings you want to calibrate, start the survey, t
 - `-40 dBm`
 - `1 dB compression`, with the generator level entered in **Compression dBm**
 
-The app interpolates or extrapolates between the signal-level calibration points and applies the correction to the received level, CSV log, and spectrum display. For this VHF broadcast profile, centre frequency remains valid anywhere from 88 to 108 MHz. Tuner, antenna, HDR mode, Bias T, DAB notch, FM notch, and MW notch changes do not invalidate the calibration status. Other current SDR GUI settings must match the stored calibration metadata, and centre frequency must stay in the VHF broadcast range, otherwise the calibration status text turns red and the calibration is not applied until the settings match again.
+The app interpolates or extrapolates between the signal-level calibration points and applies the correction to the received level, CSV log, and spectrum display. Centre frequency remains valid anywhere within the selected calibration band's frequency range. Tuner, antenna, HDR mode, Bias T, DAB notch, FM notch, and MW notch changes do not invalidate the calibration status. Other current SDR GUI settings must match the stored calibration metadata, and centre frequency must stay in the selected band range, otherwise the calibration status text turns red and the calibration is not applied until the settings match again.
+
+Use **Locked** after a band calibration is complete. While locked, the app blocks **New band cal** and **Capture point** for that band. Unlocking prompts for confirmation so stored calibration points are not easily changed by accident.
 
 ## Ubuntu GPS Setup
 
