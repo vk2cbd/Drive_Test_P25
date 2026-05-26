@@ -1,6 +1,6 @@
 # Radio Network Survey Logger
 
-Version: `0.4.12-beta`
+Version: `0.4.13-beta`
 
 Python GUI application for surveying a radio network with:
 
@@ -133,10 +133,10 @@ python3 -m serial.tools.miniterm /dev/ttyUSB0 4800
 The logger writes:
 
 ```csv
-date_local,time_local,latitude,longitude,received_level_dbm
+date_local,time_local,latitude_dms,longitude_dms,latitude_deg,longitude_deg,received_level_dbm
 ```
 
-GPS time is converted from UTC to the computer's local timezone when the row is written. The GUI also displays GPS time in local time. Latitude and longitude are formatted separately in degrees, minutes, and seconds.
+GPS time is converted from UTC to the computer's local timezone when the row is written. The GUI also displays GPS time in local time. CSV logs include both readable DMS position fields and decimal-degree position fields: `latitude_dms`, `longitude_dms`, `latitude_deg`, and `longitude_deg`.
 
 ## Ubuntu SDRplay Setup
 

@@ -13,6 +13,6 @@ def test_csv_logger_writes_requested_columns(tmp_path) -> None:
 
     local_timestamp = fix.timestamp_utc.astimezone()
     assert path.read_text(encoding="utf-8").splitlines() == [
-        "date_local,time_local,latitude,longitude,received_level_dbm",
-        f"{local_timestamp:%Y-%m-%d},{local_timestamp:%H:%M:%S},33:52:08S,151:12:33E,-87.46",
+        "date_local,time_local,latitude_dms,longitude_dms,latitude_deg,longitude_deg,received_level_dbm",
+        f"{local_timestamp:%Y-%m-%d},{local_timestamp:%H:%M:%S},33:52:08S,151:12:33E,-33.8688000,151.2093000,-87.46",
     ]

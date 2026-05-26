@@ -19,7 +19,17 @@ class CsvSurveyLogger:
         self._file = self.path.open("a", newline="", encoding="utf-8")
         self._writer = csv.writer(self._file)
         if not exists:
-            self._writer.writerow(("date_local", "time_local", "latitude", "longitude", "received_level_dbm"))
+            self._writer.writerow(
+                (
+                    "date_local",
+                    "time_local",
+                    "latitude_dms",
+                    "longitude_dms",
+                    "latitude_deg",
+                    "longitude_deg",
+                    "received_level_dbm",
+                )
+            )
 
     def write(self, fix: GpsFix, level_dbm: float) -> None:
         if self._writer is None:
@@ -32,6 +42,8 @@ class CsvSurveyLogger:
                 local_timestamp.strftime("%H:%M:%S"),
                 latitude,
                 longitude,
+                f"{fix.latitude_deg:.7f}",
+                f"{fix.longitude_deg:.7f}",
                 f"{level_dbm:.2f}",
             )
         )
