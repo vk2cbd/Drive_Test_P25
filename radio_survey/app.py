@@ -83,6 +83,7 @@ class SurveyApp(tk.Tk):
         self._plot_zoom: tuple[float, float, float, float] | None = None
         self._plot_view_history: list[PlotViewState] = []
         self._plot_drag_start: tuple[float, float] | None = None
+        self._plot_drag_current: tuple[float, float] | None = None
         self._plot_drag_rect: int | None = None
         self._last_plot_bounds: tuple[float, float, float, float, float, float, float, float] | None = None
         self._running = False
@@ -931,6 +932,7 @@ class SurveyApp(tk.Tk):
         width = max(canvas.winfo_width(), 10)
         height = max(canvas.winfo_height(), 10)
         canvas.delete("all")
+        self._plot_drag_rect = None
 
         margin_left = 54
         margin_right = 14
@@ -951,6 +953,9 @@ class SurveyApp(tk.Tk):
 
         if not self._points:
             self._last_plot_bounds = None
+            self._plot_drag_start = None
+            self._plot_drag_current = None
+            self._plot_drag_rect = None
             canvas.create_text(width / 2, height / 2, text="Waiting for GPS fixes", fill="#b7c0c9", font=("TkDefaultFont", 13))
             return
 
@@ -958,6 +963,7 @@ class SurveyApp(tk.Tk):
         visible = [point for point in self._points if x_min <= point.epoch_s <= x_max]
         if not visible:
             self._last_plot_bounds = (margin_left, margin_top, plot_w, plot_h, x_min, x_max, low, high)
+            self._draw_plot_drag_overlay()
             return
 
         if self._plot_zoom is None and self.autoscale_y_var.get():
@@ -989,6 +995,7 @@ class SurveyApp(tk.Tk):
         canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill="#ffffff", outline="#5cc8ff")
         canvas.create_text(margin_left, height - 16, text=_format_axis_time(x_min), fill="#b7c0c9", anchor="w")
         canvas.create_text(width - margin_right, height - 16, text=_format_axis_time(x_max), fill="#b7c0c9", anchor="e")
+        self._draw_plot_drag_overlay()
 
     def _current_plot_view(self) -> tuple[float, float, float, float]:
         if self._plot_zoom is not None:
@@ -1062,29 +1069,16 @@ class SurveyApp(tk.Tk):
         x = self._clamp_plot_x(float(event.x))
         y = self._clamp_plot_y(float(event.y))
         self._plot_drag_start = (x, y)
-        if self._plot_drag_rect is not None:
-            self.canvas.delete(self._plot_drag_rect)
-        self._plot_drag_rect = self.canvas.create_rectangle(
-            x,
-            y,
-            x,
-            y,
-            outline="#ffd24d",
-            width=2,
-            dash=(4, 2),
-            fill="#263746",
-            stipple="gray25",
-        )
-        self.canvas.lift(self._plot_drag_rect)
+        self._plot_drag_current = (x, y)
+        self._draw_plot_drag_overlay()
 
     def _plot_drag_motion_event(self, event: tk.Event) -> None:
-        if self._plot_drag_start is None or self._plot_drag_rect is None:
+        if self._plot_drag_start is None:
             return
-        x0, y0 = self._plot_drag_start
         x1 = self._clamp_plot_x(float(event.x))
         y1 = self._clamp_plot_y(float(event.y))
-        self.canvas.coords(self._plot_drag_rect, x0, y0, x1, y1)
-        self.canvas.lift(self._plot_drag_rect)
+        self._plot_drag_current = (x1, y1)
+        self._draw_plot_drag_overlay()
 
     def _plot_drag_release_event(self, event: tk.Event) -> None:
         if self._plot_drag_start is None or self._last_plot_bounds is None:
@@ -1092,15 +1086,48 @@ class SurveyApp(tk.Tk):
         x0, y0 = self._plot_drag_start
         x1 = self._clamp_plot_x(float(event.x))
         y1 = self._clamp_plot_y(float(event.y))
-        if self._plot_drag_rect is not None:
-            self.canvas.delete(self._plot_drag_rect)
         self._plot_drag_start = None
+        self._plot_drag_current = None
+        self._delete_plot_drag_overlay()
         self._plot_drag_rect = None
         if abs(x1 - x0) < 8 or abs(y1 - y0) < 8:
             return
         self._push_plot_view_history()
         self._plot_zoom = self._pixel_rect_to_plot_range(x0, y0, x1, y1)
         self._redraw_plot()
+
+    def _draw_plot_drag_overlay(self) -> None:
+        if self._plot_drag_start is None or self._plot_drag_current is None:
+            return
+        x0, y0 = self._plot_drag_start
+        x1, y1 = self._plot_drag_current
+        if self._plot_drag_rect is None:
+            self._plot_drag_rect = self.canvas.create_rectangle(
+                x0,
+                y0,
+                x1,
+                y1,
+                outline="#ffd24d",
+                width=3,
+                dash=(5, 2),
+            )
+        else:
+            try:
+                self.canvas.coords(self._plot_drag_rect, x0, y0, x1, y1)
+            except tk.TclError:
+                self._plot_drag_rect = None
+                self._draw_plot_drag_overlay()
+                return
+        self.canvas.lift(self._plot_drag_rect)
+
+    def _delete_plot_drag_overlay(self) -> None:
+        if self._plot_drag_rect is None:
+            return
+        try:
+            self.canvas.delete(self._plot_drag_rect)
+        except tk.TclError:
+            pass
+        self._plot_drag_rect = None
 
     def _clamp_plot_x(self, value: float) -> float:
         if self._last_plot_bounds is None:
