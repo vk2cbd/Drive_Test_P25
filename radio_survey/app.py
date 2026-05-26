@@ -53,6 +53,7 @@ class SurveyApp(tk.Tk):
         self._spectrum_average_powers: tuple[float, ...] | None = None
         self._spectrum_average_frequencies: tuple[float, ...] | None = None
         self._running = False
+        self._last_measurement_signature: tuple[object, ...] | None = None
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -297,6 +298,7 @@ class SurveyApp(tk.Tk):
             self._level_meter = create_level_meter(str(params["backend"]))
             self._level_meter.configure(params)
             self._active_sdr_backend = str(params["backend"])
+            self._last_measurement_signature = self._measurement_signature(params)
             self._refresh_sdr_status()
             if self.logging_enabled_var.get():
                 self._open_logger()
@@ -330,6 +332,7 @@ class SurveyApp(tk.Tk):
         self._gps_source = None
         self._level_meter = None
         self._active_sdr_backend = None
+        self._last_measurement_signature = None
         self._logger = None
 
     def _commit_all_settings(self) -> None:
@@ -483,9 +486,17 @@ class SurveyApp(tk.Tk):
 
     def _reconfigure_level_meter(self) -> None:
         params = self._collect_sdr_params()
+        measurement_signature = self._measurement_signature(params)
+        reset_measurement_history = (
+            self._last_measurement_signature is not None
+            and measurement_signature != self._last_measurement_signature
+        )
         backend = str(params["backend"])
         if self._level_meter is not None and self._active_sdr_backend == backend:
             self._level_meter.update_settings(params)
+            if reset_measurement_history:
+                self._clear_measurement_history()
+            self._last_measurement_signature = measurement_signature
             self._refresh_sdr_status()
             return
 
@@ -495,7 +506,27 @@ class SurveyApp(tk.Tk):
         new_meter.configure(params)
         self._level_meter = new_meter
         self._active_sdr_backend = backend
+        if reset_measurement_history:
+            self._clear_measurement_history()
+        self._last_measurement_signature = measurement_signature
         self._refresh_sdr_status()
+
+    def _measurement_signature(self, params: dict[str, object]) -> tuple[object, ...]:
+        return (
+            params.get("center_frequency_hz"),
+            params.get("sample_rate_hz"),
+            params.get("bandwidth_hz"),
+            params.get("measurement_bandwidth_khz"),
+            params.get("dbm_offset"),
+        )
+
+    def _clear_measurement_history(self) -> None:
+        self._points.clear()
+        self._spectrum_average_powers = None
+        self._spectrum_average_frequencies = None
+        self.level_var.set("-")
+        self._redraw_plot()
+        self._redraw_spectrum()
 
     def _refresh_sdr_status(self) -> None:
         if self._level_meter is None:

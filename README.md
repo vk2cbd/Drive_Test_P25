@@ -1,6 +1,6 @@
 # Radio Network Survey Logger
 
-Version: `0.3.0-alpha`
+Version: `0.3.1-alpha`
 
 Python GUI application for surveying a radio network with:
 
@@ -54,7 +54,7 @@ The received-level plot defaults to a manual Y axis. **Y max** and **Y min** are
 
 The spectrum display sits to the left of the received-level plot. Its frequency axis follows the configured center frequency and IF bandwidth. Spectrum Y-axis controls mirror the power plot controls and also default to manual scaling. **Spec averages** applies display averaging to the spectrum trace and accepts integer values from 1 to 100.
 
-The received-level plot now uses the **Power meas BW** field, in kHz, to measure channel power around the configured center frequency instead of always using the full SDR bandwidth. This usually makes a narrow signal-generator carrier much easier to see. The value is still relative until calibrated with **dBm calibration offset**.
+The received-level plot now uses the **Power meas BW** field, in kHz, to measure channel power around the configured center frequency instead of always using the full SDR bandwidth. The effective measurement bandwidth is capped by the configured sample rate and IF bandwidth, and the app shows both requested and effective bandwidth in the **SDR applied** status line. This usually makes a narrow signal-generator carrier much easier to see. The value is still relative until calibrated with **dBm calibration offset**.
 
 Changing the plot time window only changes which samples are visible. It does not delete the in-memory display history for the current app session.
 

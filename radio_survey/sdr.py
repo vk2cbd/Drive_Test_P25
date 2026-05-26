@@ -124,6 +124,9 @@ class SoapySdrplayLevelMeter:
         self._sample_rate_hz = float(params["sample_rate_hz"])
         self._bandwidth_hz = float(params["bandwidth_hz"])
         self._measurement_bandwidth_hz = float(params.get("measurement_bandwidth_hz", 25.0)) * 1_000.0
+        self._last_level_dbm = None
+        self._last_spectrum = None
+        self._sample_counter = 0
         notes: list[str] = []
         warnings: list[str] = []
         self._diagnostics = MeterDiagnostics()
@@ -165,6 +168,11 @@ class SoapySdrplayLevelMeter:
         self._samples_per_level = int(params.get("samples_per_level", self._samples_per_level))
         self._dbm_offset = float(params.get("dbm_offset", self._dbm_offset))
         self._measurement_bandwidth_hz = float(params.get("measurement_bandwidth_hz", self._measurement_bandwidth_hz / 1_000.0)) * 1_000.0
+        with self._condition:
+            self._last_level_dbm = None
+            self._last_spectrum = None
+            self._last_error = None
+            self._sample_counter = 0
         self._sdr.setFrequency(self._direction, self._channel, self._center_frequency_hz)
         self._sdr.setSampleRate(self._direction, self._channel, self._sample_rate_hz)
         self._set_if_supported("setBandwidth", self._bandwidth_hz, warnings)
@@ -274,11 +282,12 @@ class SoapySdrplayLevelMeter:
         window = self._np.hanning(fft_size).astype(self._np.float32)
         spectrum = self._np.fft.fftshift(self._np.fft.fft(samples * window))
         offsets_hz = self._np.fft.fftshift(self._np.fft.fftfreq(fft_size, d=1.0 / self._sample_rate_hz))
-        half_measurement_bw = min(self._measurement_bandwidth_hz, self._bandwidth_hz, self._sample_rate_hz) / 2.0
+        half_measurement_bw = self._effective_measurement_bandwidth_hz() / 2.0
         mask = self._np.abs(offsets_hz) <= half_measurement_bw
         if not mask.any():
             mask = self._np.ones_like(offsets_hz, dtype=bool)
-        power_linear = (self._np.abs(spectrum[mask]) / max(float(fft_size), 1.0)) ** 2
+        window_power = max(float(self._np.sum(window ** 2)), 1.0)
+        power_linear = (self._np.abs(spectrum[mask]) ** 2) / (float(fft_size) * window_power)
         dbfs = 10.0 * math.log10(max(float(self._np.sum(power_linear)), 1e-24))
         return dbfs + self._dbm_offset
 
@@ -403,8 +412,14 @@ class SoapySdrplayLevelMeter:
                 applied.append(param_key)
             except Exception as exc:
                 warnings.append(f"{param_key} not applied: {exc}")
-        applied.append(f"Power BW {self._measurement_bandwidth_hz / 1_000.0:g} kHz")
+        applied.append(
+            f"Power BW {self._measurement_bandwidth_hz / 1_000.0:g} kHz "
+            f"(effective {self._effective_measurement_bandwidth_hz() / 1_000.0:g} kHz)"
+        )
         return tuple(applied)
+
+    def _effective_measurement_bandwidth_hz(self) -> float:
+        return max(1.0, min(self._measurement_bandwidth_hz, self._bandwidth_hz, self._sample_rate_hz))
 
     def _write_first_setting(self, keys: tuple[str, ...], value: object, warnings: list[str]) -> str | None:
         available = self._available_setting_keys()
