@@ -24,7 +24,7 @@ from .config import SDR_PARAMETER_DEFS, ParameterDef
 from .gps import SerialGpsSource, SimulatedGpsSource, default_gps_port, discover_gps_ports
 from .logger import CsvSurveyLogger
 from .nmea import GpsFix
-from .p25 import P25ControlChannelDecoder, P25ControlStatus
+from .p25 import P25Constellation, P25ControlChannelDecoder, P25ControlStatus, make_constellation
 from .settings import load_settings, save_settings
 from .sdr import LevelMeter, create_level_meter
 
@@ -399,6 +399,7 @@ class SurveyApp(tk.Tk):
         self.p25_system_var = tk.StringVar(value="-")
         self.p25_site_var = tk.StringVar(value="-")
         self.p25_neighbours_var = tk.StringVar(value="-")
+        self.p25_constellation_var = tk.StringVar(value="-")
 
         for row, (label, var) in enumerate(
             (
@@ -407,10 +408,15 @@ class SurveyApp(tk.Tk):
                 ("System", self.p25_system_var),
                 ("RFSS/Site", self.p25_site_var),
                 ("Neighbours", self.p25_neighbours_var),
+                ("Signal", self.p25_constellation_var),
             )
         ):
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=1)
             ttk.Label(frame, textvariable=var, wraplength=430, justify="left").grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=1)
+        self.p25_constellation_canvas = tk.Canvas(frame, background="#101418", highlightthickness=0, height=180)
+        self.p25_constellation_canvas.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.p25_constellation_canvas.bind("<Configure>", lambda _event: self._redraw_p25_constellation())
+        self._last_p25_constellation = P25Constellation()
 
     def _make_var(self, param: ParameterDef) -> tk.Variable:
         value = self._settings.get(param.key, self._legacy_setting_value(param))
@@ -499,6 +505,7 @@ class SurveyApp(tk.Tk):
         self.sdr_status_var.set("SDR not started")
         self._p25_decoder = P25ControlChannelDecoder()
         self._set_p25_display(P25ControlStatus(message="Waiting for P25 control channel"))
+        self._set_p25_constellation(P25Constellation(message="No live SDR IQ samples"))
         self._plot_right_edge_s = time.time()
         self._redraw_plot()
 
@@ -1113,9 +1120,14 @@ class SurveyApp(tk.Tk):
             return
         if snapshot is None:
             self._set_p25_display(P25ControlStatus(message="P25 decoder needs live SDR IQ samples"))
+            self._set_p25_constellation(P25Constellation(message="No live SDR IQ samples"))
             return
         status = self._p25_decoder.update(snapshot.samples, snapshot.sample_rate_hz)
         self._set_p25_display(status)
+        try:
+            self._set_p25_constellation(make_constellation(snapshot.samples, snapshot.sample_rate_hz))
+        except Exception as exc:
+            self._set_p25_constellation(P25Constellation(message=f"Constellation error: {exc}"))
 
     def _set_p25_display(self, status: P25ControlStatus) -> None:
         if not hasattr(self, "p25_status_var"):
@@ -1131,6 +1143,60 @@ class SurveyApp(tk.Tk):
         else:
             self.p25_site_var.set("-")
         self.p25_neighbours_var.set("; ".join(neighbour.display() for neighbour in status.neighbours) or "-")
+
+    def _set_p25_constellation(self, constellation: P25Constellation) -> None:
+        self._last_p25_constellation = constellation
+        if hasattr(self, "p25_constellation_var"):
+            self.p25_constellation_var.set(constellation.message)
+        self._redraw_p25_constellation()
+
+    def _redraw_p25_constellation(self) -> None:
+        if not hasattr(self, "p25_constellation_canvas"):
+            return
+        canvas = self.p25_constellation_canvas
+        width = max(canvas.winfo_width(), 10)
+        height = max(canvas.winfo_height(), 10)
+        canvas.delete("all")
+        canvas.create_rectangle(0, 0, width, height, fill="#101418", outline="")
+        constellation = getattr(self, "_last_p25_constellation", P25Constellation())
+
+        gap = 18
+        left_w = max(80, int((width - gap) * 0.45))
+        right_x = left_w + gap
+        right_w = max(80, width - right_x)
+        margin = 22
+        plot_h = max(20, height - margin * 2)
+
+        canvas.create_text(8, 8, anchor="nw", text="IQ", fill="#d7e0ea")
+        canvas.create_text(right_x, 8, anchor="nw", text="C4FM symbols", fill="#d7e0ea")
+
+        iq_cx = left_w / 2
+        iq_cy = height / 2 + 8
+        iq_radius = max(10, min(left_w - margin * 2, plot_h) / 2)
+        canvas.create_oval(iq_cx - iq_radius, iq_cy - iq_radius, iq_cx + iq_radius, iq_cy + iq_radius, outline="#39424d")
+        canvas.create_line(iq_cx - iq_radius, iq_cy, iq_cx + iq_radius, iq_cy, fill="#8fa2b3")
+        canvas.create_line(iq_cx, iq_cy - iq_radius, iq_cx, iq_cy + iq_radius, fill="#8fa2b3")
+        for real, imag in constellation.iq_points:
+            x = iq_cx + max(-1.4, min(1.4, real)) * iq_radius / 1.4
+            y = iq_cy - max(-1.4, min(1.4, imag)) * iq_radius / 1.4
+            canvas.create_oval(x - 1, y - 1, x + 1, y + 1, fill="#73d2de", outline="")
+
+        symbol_left = right_x + margin
+        symbol_right = width - margin
+        symbol_top = margin
+        symbol_bottom = height - margin
+        canvas.create_rectangle(symbol_left, symbol_top, symbol_right, symbol_bottom, outline="#39424d")
+        for level in (-1.0, -0.33, 0.33, 1.0):
+            y = symbol_top + (1.5 - level) / 3.0 * (symbol_bottom - symbol_top)
+            canvas.create_line(symbol_left, y, symbol_right, y, fill="#8fa2b3")
+            canvas.create_text(symbol_left - 4, y, anchor="e", text=f"{level:g}", fill="#d7e0ea", font=("TkDefaultFont", 8))
+        for fraction, level in constellation.symbol_points:
+            x = symbol_left + fraction * (symbol_right - symbol_left)
+            y = symbol_top + (1.5 - level) / 3.0 * (symbol_bottom - symbol_top)
+            canvas.create_oval(x - 1, y - 1, x + 1, y + 1, fill="#ffd166", outline="")
+
+        if not constellation.iq_points and not constellation.symbol_points:
+            canvas.create_text(width / 2, height / 2, text=constellation.message, fill="#d7e0ea")
 
     def _redraw_plot(self) -> None:
         canvas = self.canvas

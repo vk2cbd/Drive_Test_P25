@@ -39,6 +39,14 @@ class P25ControlStatus:
     message: str = "Waiting for P25 control channel"
 
 
+@dataclass(frozen=True)
+class P25Constellation:
+    iq_points: tuple[tuple[float, float], ...] = ()
+    symbol_points: tuple[tuple[float, float], ...] = ()
+    samples_per_symbol: int = 0
+    message: str = "No P25 constellation data"
+
+
 class P25ControlChannelDecoder:
     """Experimental P25 Phase 1 control-channel front end.
 
@@ -121,6 +129,40 @@ class P25ControlChannelDecoder:
         return best_bits
 
 
+def make_constellation(samples: object, sample_rate_hz: float, max_points: int = 420) -> P25Constellation:
+    import numpy as np
+
+    iq = np.asarray(samples, dtype=np.complex64)
+    if iq.size < 128:
+        return P25Constellation(message="Not enough IQ samples")
+
+    iq = iq - np.mean(iq)
+    rms = float(np.sqrt(np.mean(np.abs(iq) ** 2))) or 1.0
+    iq = iq / rms
+    iq_step = max(1, iq.size // max_points)
+    iq_points = tuple((float(value.real), float(value.imag)) for value in iq[::iq_step][:max_points])
+
+    discriminator = np.angle(iq[1:] * np.conj(iq[:-1]))
+    discriminator = discriminator - np.mean(discriminator)
+    samples_per_symbol = max(1, int(round(float(sample_rate_hz) / P25_SYMBOL_RATE)))
+    phase = _best_symbol_phase(discriminator, samples_per_symbol)
+    symbols = discriminator[phase::samples_per_symbol]
+    scale = float(np.percentile(np.abs(symbols), 90)) if symbols.size else 1.0
+    if abs(scale) < 1e-9:
+        scale = 1.0
+    symbols = np.clip(symbols / scale, -1.5, 1.5)
+    symbol_step = max(1, symbols.size // max_points)
+    selected = symbols[::symbol_step][:max_points]
+    denominator = max(len(selected) - 1, 1)
+    symbol_points = tuple((index / denominator, float(value)) for index, value in enumerate(selected))
+    return P25Constellation(
+        iq_points=iq_points,
+        symbol_points=symbol_points,
+        samples_per_symbol=samples_per_symbol,
+        message=f"{len(iq_points)} IQ pts, {len(symbol_points)} C4FM symbols",
+    )
+
+
 def parse_tsbk(block: bytes) -> P25ControlStatus | None:
     if len(block) < 10:
         return None
@@ -158,6 +200,20 @@ def _slice_c4fm_symbol(value: float) -> int:
     if value <= 0.5:
         return 2
     return 3
+
+
+def _best_symbol_phase(discriminator: object, samples_per_symbol: int) -> int:
+    best_phase = 0
+    best_spread = -1.0
+    for phase in range(min(samples_per_symbol, 48)):
+        symbols = discriminator[phase::samples_per_symbol]
+        if len(symbols) < 16:
+            continue
+        spread = float(abs(max(symbols) - min(symbols)))
+        if spread > best_spread:
+            best_spread = spread
+            best_phase = phase
+    return best_phase
 
 
 _DIBIT_MAPPINGS = (
