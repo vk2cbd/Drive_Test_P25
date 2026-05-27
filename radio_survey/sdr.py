@@ -5,7 +5,7 @@ import random
 import threading
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Callable, Protocol
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,7 @@ class MeterDiagnostics:
 class LevelMeter(Protocol):
     def configure(self, params: dict[str, object]) -> None: ...
     def update_settings(self, params: dict[str, object]) -> None: ...
+    def set_iq_callback(self, callback: Callable[[IqSnapshot], None] | None) -> None: ...
     def read_level_dbm(self) -> float: ...
     def get_last_spectrum(self) -> SpectrumSnapshot | None: ...
     def get_last_iq_snapshot(self) -> IqSnapshot | None: ...
@@ -45,6 +46,7 @@ class SimulatedLevelMeter:
         self._sample_rate_hz = 2_000_000.0
         self._bandwidth_hz = 1_536_000.0
         self._last_spectrum: SpectrumSnapshot | None = None
+        self._iq_callback: Callable[[IqSnapshot], None] | None = None
 
     def configure(self, params: dict[str, object]) -> None:
         self._offset = float(params.get("simulated_level_dbm", -82.0))
@@ -53,6 +55,9 @@ class SimulatedLevelMeter:
 
     def update_settings(self, params: dict[str, object]) -> None:
         self.configure(params)
+
+    def set_iq_callback(self, callback: Callable[[IqSnapshot], None] | None) -> None:
+        self._iq_callback = callback
 
     def read_level_dbm(self) -> float:
         elapsed = time.monotonic() - self._start
@@ -103,6 +108,7 @@ class SoapySdrplayLevelMeter:
         self._last_level_dbm: float | None = None
         self._last_spectrum: SpectrumSnapshot | None = None
         self._last_iq_snapshot: IqSnapshot | None = None
+        self._iq_callback: Callable[[IqSnapshot], None] | None = None
         self._center_frequency_hz = 100_000_000.0
         self._sample_rate_hz = 2_000_000.0
         self._bandwidth_hz = 1_536_000.0
@@ -202,6 +208,9 @@ class SoapySdrplayLevelMeter:
         self._diagnostics = MeterDiagnostics(tuple(notes), tuple(warnings))
         self._start_reader()
 
+    def set_iq_callback(self, callback: Callable[[IqSnapshot], None] | None) -> None:
+        self._iq_callback = callback
+
     def read_level_dbm(self) -> float:
         if self._sdr is None or self._stream is None:
             raise RuntimeError("SDR is not configured")
@@ -282,6 +291,8 @@ class SoapySdrplayLevelMeter:
                         self._last_error = None
                         self._sample_counter += 1
                         self._condition.notify_all()
+                    if self._iq_callback is not None:
+                        self._iq_callback(iq_snapshot)
                     continue
 
                 code = int(result.ret)

@@ -18,7 +18,7 @@ The app includes simulator modes for both GPS and SDR so the GUI and logging flo
 
 The P25 branch adds an initial Phase 1 control-channel decoder panel. When the SDR is tuned to a P25 control channel, the app uses the live IQ samples to run a C4FM discriminator and P25 frame-sync search. The panel displays decoder status, WACN, system ID, RFSS/site, and advertised neighbour sites when decodable trunking signalling blocks are recovered. It also includes a diagnostic constellation view with raw IQ scatter on the left and C4FM discriminator symbol levels on the right, which helps check signal quality, tuning, clipping, and whether the input resembles a usable P25 control channel.
 
-This is an early development feature. It includes the RF demod/front-end, frame-sync search, and parser for common Network Status Broadcast, RFSS Status Broadcast, and Adjacent Site Status Broadcast messages. The GUI reports **No P25 frame sync** or **P25 sync, waiting for decodable TSBK** until the control channel recovery path has enough valid data to populate those fields.
+This is an early development feature. It includes the RF demod/front-end, frame-sync search, and parser for common Network Status Broadcast, RFSS Status Broadcast, and Adjacent Site Status Broadcast messages. P25 decoding now runs in a dedicated worker fed continuously from the SDR IQ stream; it is not gated by GPS fixes or the one-sample-per-second drive-test logging cadence. The GUI reports **No P25 frame sync** or **P25 sync, waiting for decodable TSBK** until the control channel recovery path has enough valid data to populate those fields.
 
 ## Ubuntu Quick Start
 

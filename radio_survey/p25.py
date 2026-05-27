@@ -58,6 +58,7 @@ class P25ControlChannelDecoder:
 
     def __init__(self) -> None:
         self._status = P25ControlStatus()
+        self._bit_buffer = ""
 
     @property
     def status(self) -> P25ControlStatus:
@@ -70,7 +71,8 @@ class P25ControlChannelDecoder:
             self._status = P25ControlStatus(message=f"P25 demod error: {exc}")
             return self._status
 
-        sync_offsets = _find_all(bits, P25_FRAME_SYNC_BITS)
+        self._bit_buffer = (self._bit_buffer + bits)[-24000:]
+        sync_offsets = _find_all(self._bit_buffer, P25_FRAME_SYNC_BITS)
         if not sync_offsets:
             self._status = P25ControlStatus(message="No P25 frame sync")
             return self._status
@@ -78,7 +80,7 @@ class P25ControlChannelDecoder:
         parsed = self._status
         tsbk_count = 0
         for offset in sync_offsets[-8:]:
-            raw_payload = _remove_status_symbols(bits[offset + 48 + 64 : offset + 48 + 64 + 220])
+            raw_payload = _remove_status_symbols(self._bit_buffer[offset + 48 + 64 : offset + 48 + 64 + 220])
             for block in _candidate_tsbks(raw_payload):
                 message = parse_tsbk(block)
                 if message is None:

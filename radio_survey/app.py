@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import threading
 import time
 import tkinter as tk
 from dataclasses import dataclass
@@ -26,7 +27,7 @@ from .logger import CsvSurveyLogger
 from .nmea import GpsFix
 from .p25 import P25Constellation, P25ControlChannelDecoder, P25ControlStatus, make_constellation
 from .settings import load_settings, save_settings
-from .sdr import LevelMeter, create_level_meter
+from .sdr import IqSnapshot, LevelMeter, create_level_meter
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,12 @@ class SurveyApp(tk.Tk):
         self._active_sdr_backend: str | None = None
         self._logger: CsvSurveyLogger | None = None
         self._p25_decoder = P25ControlChannelDecoder()
+        self._p25_queue: queue.Queue[IqSnapshot] = queue.Queue(maxsize=12)
+        self._p25_stop = threading.Event()
+        self._p25_thread: threading.Thread | None = None
+        self._p25_status = P25ControlStatus()
+        self._p25_constellation = P25Constellation()
+        self._p25_lock = threading.Lock()
         self._events: queue.Queue[tuple[str, object]] = queue.Queue()
         self._points: list[LevelPoint] = []
         self._vars: dict[str, tk.Variable] = {}
@@ -112,6 +119,7 @@ class SurveyApp(tk.Tk):
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(100, self._process_events)
+        self.after(250, self._process_p25_ui)
 
     def _build_ui(self) -> None:
         self.columnconfigure(0, weight=0)
@@ -473,6 +481,8 @@ class SurveyApp(tk.Tk):
             params = self._collect_sdr_params()
             self._level_meter = create_level_meter(str(params["backend"]))
             self._level_meter.configure(params)
+            self._start_p25_worker()
+            self._level_meter.set_iq_callback(self._queue_p25_iq)
             self._active_sdr_backend = str(params["backend"])
             self._last_measurement_signature = self._measurement_signature(params)
             self._refresh_sdr_status()
@@ -510,8 +520,11 @@ class SurveyApp(tk.Tk):
         self._redraw_plot()
 
     def _cleanup(self) -> None:
+        self._stop_p25_worker()
         if self._gps_source is not None:
             self._gps_source.stop()
+        if self._level_meter is not None:
+            self._level_meter.set_iq_callback(None)
         if self._level_meter is not None:
             self._level_meter.close()
         if self._logger is not None:
@@ -526,6 +539,72 @@ class SurveyApp(tk.Tk):
         self._gps_fix_stale = False
         self._gps_serial_error_active = False
         self._logger = None
+
+    def _start_p25_worker(self) -> None:
+        self._stop_p25_worker()
+        self._p25_decoder = P25ControlChannelDecoder()
+        self._p25_stop = threading.Event()
+        self._p25_queue = queue.Queue(maxsize=12)
+        with self._p25_lock:
+            self._p25_status = P25ControlStatus(message="P25 decoder running")
+            self._p25_constellation = P25Constellation(message="Waiting for live IQ samples")
+        self._p25_thread = threading.Thread(target=self._p25_worker_loop, name="p25-decoder", daemon=True)
+        self._p25_thread.start()
+
+    def _stop_p25_worker(self) -> None:
+        self._p25_stop.set()
+        if self._p25_thread is not None:
+            self._p25_thread.join(timeout=1.0)
+            self._p25_thread = None
+        while True:
+            try:
+                self._p25_queue.get_nowait()
+            except queue.Empty:
+                break
+
+    def _queue_p25_iq(self, snapshot: IqSnapshot) -> None:
+        if self._p25_stop.is_set():
+            return
+        try:
+            self._p25_queue.put_nowait(snapshot)
+        except queue.Full:
+            try:
+                self._p25_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._p25_queue.put_nowait(snapshot)
+            except queue.Full:
+                pass
+
+    def _p25_worker_loop(self) -> None:
+        update_count = 0
+        while not self._p25_stop.is_set():
+            try:
+                snapshot = self._p25_queue.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            try:
+                status = self._p25_decoder.update(snapshot.samples, snapshot.sample_rate_hz)
+                update_count += 1
+                constellation = None
+                if update_count % 5 == 0:
+                    constellation = make_constellation(snapshot.samples, snapshot.sample_rate_hz)
+                with self._p25_lock:
+                    self._p25_status = status
+                    if constellation is not None:
+                        self._p25_constellation = constellation
+            except Exception as exc:
+                with self._p25_lock:
+                    self._p25_status = P25ControlStatus(message=f"P25 decoder error: {exc}")
+
+    def _process_p25_ui(self) -> None:
+        with self._p25_lock:
+            status = self._p25_status
+            constellation = self._p25_constellation
+        self._set_p25_display(status)
+        self._set_p25_constellation(constellation)
+        self.after(250, self._process_p25_ui)
 
     def _commit_all_settings(self) -> None:
         try:
@@ -1067,7 +1146,6 @@ class SurveyApp(tk.Tk):
             self._plot_right_edge_s = point_time
         self._update_spectrum_average()
         self._redraw_spectrum()
-        self._update_p25_display()
         self._redraw_plot()
 
     def _check_gps_stale(self) -> None:
@@ -1108,26 +1186,6 @@ class SurveyApp(tk.Tk):
             self.satellites_var.set(str(fix.satellites))
         if fix.speed_kmh is not None:
             self.speed_var.set(f"{fix.speed_kmh:.1f}")
-
-    def _update_p25_display(self) -> None:
-        if self._level_meter is None:
-            self._set_p25_display(P25ControlStatus())
-            return
-        try:
-            snapshot = self._level_meter.get_last_iq_snapshot()
-        except Exception as exc:
-            self._set_p25_display(P25ControlStatus(message=f"P25 sample error: {exc}"))
-            return
-        if snapshot is None:
-            self._set_p25_display(P25ControlStatus(message="P25 decoder needs live SDR IQ samples"))
-            self._set_p25_constellation(P25Constellation(message="No live SDR IQ samples"))
-            return
-        status = self._p25_decoder.update(snapshot.samples, snapshot.sample_rate_hz)
-        self._set_p25_display(status)
-        try:
-            self._set_p25_constellation(make_constellation(snapshot.samples, snapshot.sample_rate_hz))
-        except Exception as exc:
-            self._set_p25_constellation(P25Constellation(message=f"Constellation error: {exc}"))
 
     def _set_p25_display(self, status: P25ControlStatus) -> None:
         if not hasattr(self, "p25_status_var"):
