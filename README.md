@@ -1,6 +1,6 @@
 # Radio Network Survey Logger
 
-Version: `0.4.15-beta`
+Version: `0.4.16-beta`
 
 Python GUI application for surveying a radio network with:
 
