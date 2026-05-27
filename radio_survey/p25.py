@@ -6,6 +6,7 @@ from dataclasses import dataclass
 P25_FRAME_SYNC = int("5575F5FF77FF", 16)
 P25_FRAME_SYNC_BITS = f"{P25_FRAME_SYNC:048b}"
 P25_SYMBOL_RATE = 4800.0
+P25_SYNC_MAX_BIT_ERRORS = 3
 
 
 @dataclass(frozen=True)
@@ -84,7 +85,7 @@ class P25ControlChannelDecoder:
             return self._status
 
         self._bit_buffer = (self._bit_buffer + bits)[-24000:]
-        sync_offsets = _find_all(self._bit_buffer, P25_FRAME_SYNC_BITS)
+        sync_offsets = _find_sync_offsets(self._bit_buffer, P25_FRAME_SYNC_BITS, P25_SYNC_MAX_BIT_ERRORS)
         if not sync_offsets:
             self._status = P25ControlStatus(
                 frequency_offset_hz=self._frequency_offset_hz,
@@ -319,6 +320,18 @@ _DIBIT_MAPPINGS = (
 )
 
 
+def _find_sync_offsets(value: str, pattern: str, max_errors: int) -> tuple[int, ...]:
+    exact = _find_all(value, pattern)
+    if exact:
+        return exact
+    pattern_length = len(pattern)
+    offsets: list[int] = []
+    for start in range(0, max(len(value) - pattern_length + 1, 0)):
+        if _hamming_distance(value[start : start + pattern_length], pattern) <= max_errors:
+            offsets.append(start)
+    return tuple(offsets)
+
+
 def _find_all(value: str, pattern: str) -> tuple[int, ...]:
     offsets: list[int] = []
     start = value.find(pattern)
@@ -326,6 +339,10 @@ def _find_all(value: str, pattern: str) -> tuple[int, ...]:
         offsets.append(start)
         start = value.find(pattern, start + 1)
     return tuple(offsets)
+
+
+def _hamming_distance(left: str, right: str) -> int:
+    return sum(1 for a, b in zip(left, right) if a != b) + abs(len(left) - len(right))
 
 
 def _remove_status_symbols(bits: str) -> str:

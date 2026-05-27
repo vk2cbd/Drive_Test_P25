@@ -1,3 +1,3 @@
 """Radio network survey logger."""
 
-__version__ = "0.5.0-p25"
+__version__ = "0.5.1-p25"

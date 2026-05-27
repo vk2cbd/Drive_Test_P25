@@ -1,22 +1,20 @@
 # Radio Network Survey Logger
 
-Version: `0.5.0-p25`
+Version: `0.5.1-p25`
 
-Python GUI application for surveying a radio network with:
+Python GUI application for P25 control-channel development, branched from the radio network survey logger, with:
 
-- USB GPS receiver emitting NMEA sentences
 - SDRplay RSPdx SDR, currently through an optional SoapySDR backend
-- Real-time geographic position display
-- Received-level logging to CSV
-- Scrolling received-level plot with a configurable 1 to 60 minute time window
-- Live spectrum display using the configured center frequency and IF bandwidth
+- Focused SDR controls for P25 testing
+- Continuous IQ-fed P25 worker
+- Channelized IQ and C4FM discriminator diagnostics
 - Experimental P25 Phase 1 control-channel panel for WACN, system/site, and neighbour-site information
 
-The app includes simulator modes for both GPS and SDR so the GUI and logging flow can be tested before hardware is connected.
+The original survey app remains in the source tree, but the P25 branch default entry point is now a simplified receiver so frame sync and control-channel demodulation can be debugged without GPS, CSV logging, calibration, received-level plotting, or survey workflow activity.
 
 ## Experimental P25 Control Channel
 
-The P25 branch adds an initial Phase 1 control-channel decoder panel. When the SDR is tuned to a P25 control channel, the app uses the live IQ samples to run a C4FM discriminator and P25 frame-sync search. The panel displays decoder status, estimated AFC offset, WACN, system ID, RFSS/site, and advertised neighbour sites when decodable trunking signalling blocks are recovered. It also includes a diagnostic constellation view with channelized IQ scatter on the left and C4FM discriminator symbol levels on the right, which helps check signal quality, tuning, clipping, and whether the input resembles a usable P25 control channel.
+The P25 branch launches as a simplified Phase 1 control-channel receiver. When the SDR is tuned to a P25 control channel, the app uses the live IQ samples to run a C4FM discriminator and P25 frame-sync search. The panel displays decoder status, estimated AFC offset, WACN, system ID, RFSS/site, and advertised neighbour sites when decodable trunking signalling blocks are recovered. It also includes a diagnostic constellation view with channelized IQ scatter on the left and C4FM discriminator symbol levels on the right, which helps check signal quality, tuning, clipping, and whether the input resembles a usable P25 control channel.
 
 This is an early development feature. It includes a P25 channelizer, automatic frequency correction, RF demod/front-end, frame-sync search, and parser for common Network Status Broadcast, RFSS Status Broadcast, and Adjacent Site Status Broadcast messages. The channelizer searches for the strongest signal near the tuned centre frequency, shifts it to baseband in software, filters it to the P25 channel width, and decimates it to a decoder-friendly rate before symbol slicing. P25 decoding runs in a dedicated worker fed continuously from the SDR IQ stream; it is not gated by GPS fixes or the one-sample-per-second drive-test logging cadence. The GUI reports **No P25 frame sync** or **P25 sync, waiting for decodable TSBK** until the control channel recovery path has enough valid data to populate those fields.
 
@@ -29,17 +27,21 @@ sudo apt update
 sudo apt install python3 python3-venv python3-tk
 ```
 
-Create a virtual environment and start the app:
+Create a virtual environment and start the P25 receiver:
 
 ```bash
-cd ~/Drive_Test
+cd ~/Drive_Test_P25
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -r requirements.txt
 python3 -m radio_survey
 ```
 
-If you do not have `pyserial` or `SoapySDR` available yet, the app can still run with simulated GPS and received level data.
+The original survey logger can still be launched from this branch for comparison:
+
+```bash
+python3 -c "from radio_survey.app import main; main()"
+```
 
 ## GUI Settings
 
