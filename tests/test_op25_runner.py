@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from radio_survey.op25_runner import OP25Config, OP25Status, build_op25_command, parse_op25_status_line, write_trunk_tsv
+from radio_survey.op25_runner import OP25Config, OP25Status, build_op25_command, normalize_plot_choice
+from radio_survey.op25_runner import parse_op25_status_line, write_trunk_tsv
 
 
 def _config() -> OP25Config:
@@ -41,6 +42,8 @@ def test_build_op25_command() -> None:
     assert "-T" in command
     assert str(trunk_path) in command
     assert "-n" in command
+    assert "constellation" in command
+    assert "symbol,constellation" not in command
 
 
 def test_parse_op25_status_line() -> None:
@@ -53,3 +56,9 @@ def test_parse_op25_status_line() -> None:
     assert status.rfss == "4"
     assert status.site == "13"
     assert status.neighbours
+
+
+def test_normalize_plot_choice() -> None:
+    assert normalize_plot_choice("symbol,constellation") == "constellation"
+    assert normalize_plot_choice("fft") == "fft"
+    assert normalize_plot_choice("symbol") == ""

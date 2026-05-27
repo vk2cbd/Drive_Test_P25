@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+VALID_OP25_PLOTS = {"constellation", "fft", "mixer", "fll"}
+
+
 @dataclass(frozen=True)
 class OP25Config:
     op25_apps_dir: str
@@ -70,11 +73,20 @@ def build_op25_command(config: OP25Config, trunk_path: Path) -> list[str]:
     ]
     if config.gains.strip():
         command.extend(("-N", config.gains.strip()))
-    if config.plots.strip():
-        command.extend(("-P", config.plots.strip()))
+    plot = normalize_plot_choice(config.plots)
+    if plot:
+        command.extend(("-P", plot))
     if not config.audio_enabled:
         command.append("-n")
     return command
+
+
+def normalize_plot_choice(value: str) -> str:
+    for item in re.split(r"[,;\s]+", value.strip()):
+        normalized = item.strip().lower()
+        if normalized in VALID_OP25_PLOTS:
+            return normalized
+    return ""
 
 
 def parse_op25_status_line(line: str, previous: OP25Status) -> OP25Status:

@@ -50,7 +50,7 @@ class P25ReceiverApp(tk.Tk):
         self.system_name_var = tk.StringVar(value=str(self._settings.get("op25_system_name", "P25")))
         self.terminal_url_var = tk.StringVar(value=str(self._settings.get("op25_terminal_url", "http:127.0.0.1:8080")))
         self.verbosity_var = tk.StringVar(value=str(int(self._settings.get("op25_verbosity", 5))))
-        self.plots_var = tk.StringVar(value=str(self._settings.get("op25_plots", "symbol,constellation")))
+        self.plots_var = tk.StringVar(value=str(self._settings.get("op25_plots", "constellation")))
         self.audio_var = tk.BooleanVar(value=bool(self._settings.get("op25_audio_enabled", False)))
 
         fields: tuple[tuple[str, tk.Variable, str, tuple[str, ...]], ...] = (
@@ -66,7 +66,7 @@ class P25ReceiverApp(tk.Tk):
             ("System name", self.system_name_var, "text", ()),
             ("Terminal", self.terminal_url_var, "text", ()),
             ("Verbosity", self.verbosity_var, "text", ()),
-            ("Plots", self.plots_var, "text", ()),
+            ("Plot", self.plots_var, "choice", ("constellation", "fft", "mixer", "fll", "")),
         )
         for row, (label, var, kind, choices) in enumerate(fields):
             ttk.Label(controls, text=label).grid(row=row, column=0, sticky="w", pady=2)
