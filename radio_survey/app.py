@@ -74,6 +74,7 @@ class SurveyApp(tk.Tk):
         self._p25_status = P25ControlStatus()
         self._p25_constellation = P25Constellation()
         self._p25_lock = threading.Lock()
+        self._p25_afc_enabled = bool(self._settings.get("p25_afc_enabled", True))
         self._events: queue.Queue[tuple[str, object]] = queue.Queue()
         self._points: list[LevelPoint] = []
         self._vars: dict[str, tk.Variable] = {}
@@ -146,12 +147,24 @@ class SurveyApp(tk.Tk):
         setup_canvas.bind_all("<Button-4>", lambda _event: setup_canvas.yview_scroll(-1, "units"))
         setup_canvas.bind_all("<Button-5>", lambda _event: setup_canvas.yview_scroll(1, "units"))
 
-        plot_area = ttk.Frame(self, padding=(0, 10, 10, 10))
-        plot_area.grid(row=0, column=1, sticky="nsew")
+        plot_container = ttk.Frame(self)
+        plot_container.grid(row=0, column=1, sticky="nsew")
+        plot_container.rowconfigure(0, weight=1)
+        plot_container.columnconfigure(0, weight=1)
+        plot_canvas = tk.Canvas(plot_container, highlightthickness=0)
+        plot_scrollbar = ttk.Scrollbar(plot_container, orient="vertical", command=plot_canvas.yview)
+        plot_canvas.configure(yscrollcommand=plot_scrollbar.set)
+        plot_canvas.grid(row=0, column=0, sticky="nsew")
+        plot_scrollbar.grid(row=0, column=1, sticky="ns")
+
+        plot_area = ttk.Frame(plot_canvas, padding=(0, 10, 10, 10))
         plot_area.columnconfigure(0, weight=1)
         plot_area.columnconfigure(1, weight=1)
         plot_area.rowconfigure(2, weight=0)
         plot_area.rowconfigure(4, weight=1)
+        plot_window = plot_canvas.create_window((0, 0), window=plot_area, anchor="nw")
+        plot_area.bind("<Configure>", lambda _event: plot_canvas.configure(scrollregion=plot_canvas.bbox("all")))
+        plot_canvas.bind("<Configure>", lambda event: plot_canvas.itemconfigure(plot_window, width=event.width))
 
         self._build_io_panel(setup)
         self._build_calibration_panel(setup)
@@ -408,10 +421,13 @@ class SurveyApp(tk.Tk):
         self.p25_site_var = tk.StringVar(value="-")
         self.p25_neighbours_var = tk.StringVar(value="-")
         self.p25_constellation_var = tk.StringVar(value="-")
+        self.p25_offset_var = tk.StringVar(value="-")
+        self.p25_afc_var = tk.BooleanVar(value=self._p25_afc_enabled)
 
         for row, (label, var) in enumerate(
             (
                 ("Status", self.p25_status_var),
+                ("AFC offset", self.p25_offset_var),
                 ("WACN", self.p25_wacn_var),
                 ("System", self.p25_system_var),
                 ("RFSS/Site", self.p25_site_var),
@@ -421,8 +437,15 @@ class SurveyApp(tk.Tk):
         ):
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=1)
             ttk.Label(frame, textvariable=var, wraplength=430, justify="left").grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=1)
+        ttk.Checkbutton(frame, text="Auto frequency correction", variable=self.p25_afc_var, command=self._toggle_p25_afc).grid(
+            row=7,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            pady=(6, 0),
+        )
         self.p25_constellation_canvas = tk.Canvas(frame, background="#101418", highlightthickness=0, height=180)
-        self.p25_constellation_canvas.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.p25_constellation_canvas.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         self.p25_constellation_canvas.bind("<Configure>", lambda _event: self._redraw_p25_constellation())
         self._last_p25_constellation = P25Constellation()
 
@@ -455,6 +478,11 @@ class SurveyApp(tk.Tk):
         else:
             widget.bind("<Return>", lambda _event: self._commit_all_settings())
             widget.bind("<KP_Enter>", lambda _event: self._commit_all_settings())
+
+    def _toggle_p25_afc(self) -> None:
+        self._p25_afc_enabled = bool(self.p25_afc_var.get())
+        self._settings["p25_afc_enabled"] = self._p25_afc_enabled
+        save_settings(self._settings)
 
     def _browse_csv(self) -> None:
         path = filedialog.asksaveasfilename(
@@ -585,11 +613,20 @@ class SurveyApp(tk.Tk):
             except queue.Empty:
                 continue
             try:
-                status = self._p25_decoder.update(snapshot.samples, snapshot.sample_rate_hz)
+                afc_enabled = self._p25_afc_enabled
+                status = self._p25_decoder.update(
+                    snapshot.samples,
+                    snapshot.sample_rate_hz,
+                    auto_frequency_correction=afc_enabled,
+                )
                 update_count += 1
                 constellation = None
                 if update_count % 5 == 0:
-                    constellation = make_constellation(snapshot.samples, snapshot.sample_rate_hz)
+                    constellation = make_constellation(
+                        snapshot.samples,
+                        snapshot.sample_rate_hz,
+                        frequency_offset_hz=status.frequency_offset_hz,
+                    )
                 with self._p25_lock:
                     self._p25_status = status
                     if constellation is not None:
@@ -1194,6 +1231,10 @@ class SurveyApp(tk.Tk):
         if status.frame_syncs:
             detail = f"{detail}; syncs {status.frame_syncs}; TSBK {status.tsbks}"
         self.p25_status_var.set(detail)
+        if status.channel_sample_rate_hz:
+            self.p25_offset_var.set(f"{status.frequency_offset_hz:+.0f} Hz, channel {status.channel_sample_rate_hz / 1000.0:.1f} ksps")
+        else:
+            self.p25_offset_var.set("-")
         self.p25_wacn_var.set(status.wacn or "-")
         self.p25_system_var.set(status.system_id or "-")
         if status.rfss_id is not None and status.site_id is not None:

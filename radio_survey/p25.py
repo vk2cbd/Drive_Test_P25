@@ -36,6 +36,8 @@ class P25ControlStatus:
     neighbours: tuple[P25NeighborSite, ...] = ()
     frame_syncs: int = 0
     tsbks: int = 0
+    frequency_offset_hz: float = 0.0
+    channel_sample_rate_hz: float = 0.0
     message: str = "Waiting for P25 control channel"
 
 
@@ -44,6 +46,8 @@ class P25Constellation:
     iq_points: tuple[tuple[float, float], ...] = ()
     symbol_points: tuple[tuple[float, float], ...] = ()
     samples_per_symbol: int = 0
+    frequency_offset_hz: float = 0.0
+    channel_sample_rate_hz: float = 0.0
     message: str = "No P25 constellation data"
 
 
@@ -59,14 +63,22 @@ class P25ControlChannelDecoder:
     def __init__(self) -> None:
         self._status = P25ControlStatus()
         self._bit_buffer = ""
+        self._frequency_offset_hz = 0.0
 
     @property
     def status(self) -> P25ControlStatus:
         return self._status
 
-    def update(self, samples: object, sample_rate_hz: float) -> P25ControlStatus:
+    def update(self, samples: object, sample_rate_hz: float, auto_frequency_correction: bool = True) -> P25ControlStatus:
         try:
-            bits = self._demodulate_bits(samples, sample_rate_hz)
+            channel, channel_rate_hz, offset_hz = channelize_p25(
+                samples,
+                sample_rate_hz,
+                self._frequency_offset_hz if auto_frequency_correction else 0.0,
+                auto_frequency_correction=auto_frequency_correction,
+            )
+            self._frequency_offset_hz = offset_hz
+            bits = self._demodulate_bits(channel, channel_rate_hz)
         except Exception as exc:
             self._status = P25ControlStatus(message=f"P25 demod error: {exc}")
             return self._status
@@ -74,7 +86,11 @@ class P25ControlChannelDecoder:
         self._bit_buffer = (self._bit_buffer + bits)[-24000:]
         sync_offsets = _find_all(self._bit_buffer, P25_FRAME_SYNC_BITS)
         if not sync_offsets:
-            self._status = P25ControlStatus(message="No P25 frame sync")
+            self._status = P25ControlStatus(
+                frequency_offset_hz=self._frequency_offset_hz,
+                channel_sample_rate_hz=channel_rate_hz,
+                message="No P25 frame sync",
+            )
             return self._status
 
         parsed = self._status
@@ -99,6 +115,8 @@ class P25ControlChannelDecoder:
             neighbours=parsed.neighbours,
             frame_syncs=len(sync_offsets),
             tsbks=tsbk_count,
+            frequency_offset_hz=self._frequency_offset_hz,
+            channel_sample_rate_hz=channel_rate_hz,
             message=message,
         )
         return self._status
@@ -131,10 +149,57 @@ class P25ControlChannelDecoder:
         return best_bits
 
 
-def make_constellation(samples: object, sample_rate_hz: float, max_points: int = 420) -> P25Constellation:
+def channelize_p25(
+    samples: object,
+    sample_rate_hz: float,
+    previous_offset_hz: float = 0.0,
+    auto_frequency_correction: bool = True,
+    search_hz: float = 25_000.0,
+    channel_hz: float = 12_500.0,
+    target_rate_hz: float = 48_000.0,
+) -> tuple[object, float, float]:
     import numpy as np
 
     iq = np.asarray(samples, dtype=np.complex64)
+    if iq.size < 128:
+        return iq, float(sample_rate_hz), previous_offset_hz
+
+    iq = iq - np.mean(iq)
+    offset_hz = previous_offset_hz
+    if auto_frequency_correction:
+        estimate_hz = _estimate_frequency_offset(iq, sample_rate_hz, search_hz)
+        offset_hz = previous_offset_hz * 0.85 + estimate_hz * 0.15 if abs(previous_offset_hz) > 1e-9 else estimate_hz
+
+    time_index = np.arange(iq.size, dtype=np.float32)
+    shifted = iq * np.exp(-1j * 2.0 * np.pi * float(offset_hz) * time_index / float(sample_rate_hz))
+    spectrum = np.fft.fftshift(np.fft.fft(shifted))
+    offsets = np.fft.fftshift(np.fft.fftfreq(shifted.size, d=1.0 / float(sample_rate_hz)))
+    mask = np.abs(offsets) <= channel_hz / 2.0
+    if mask.any():
+        spectrum = spectrum * mask
+        shifted = np.fft.ifft(np.fft.ifftshift(spectrum)).astype(np.complex64)
+
+    decimation = max(1, int(float(sample_rate_hz) // target_rate_hz))
+    if decimation > 1:
+        shifted = shifted[::decimation]
+    return shifted.astype(np.complex64), float(sample_rate_hz) / float(decimation), float(offset_hz)
+
+
+def make_constellation(
+    samples: object,
+    sample_rate_hz: float,
+    max_points: int = 420,
+    frequency_offset_hz: float = 0.0,
+) -> P25Constellation:
+    import numpy as np
+
+    iq, channel_rate_hz, offset_hz = channelize_p25(
+        samples,
+        sample_rate_hz,
+        previous_offset_hz=frequency_offset_hz,
+        auto_frequency_correction=False,
+    )
+    iq = np.asarray(iq, dtype=np.complex64)
     if iq.size < 128:
         return P25Constellation(message="Not enough IQ samples")
 
@@ -146,7 +211,7 @@ def make_constellation(samples: object, sample_rate_hz: float, max_points: int =
 
     discriminator = np.angle(iq[1:] * np.conj(iq[:-1]))
     discriminator = discriminator - np.mean(discriminator)
-    samples_per_symbol = max(1, int(round(float(sample_rate_hz) / P25_SYMBOL_RATE)))
+    samples_per_symbol = max(1, int(round(float(channel_rate_hz) / P25_SYMBOL_RATE)))
     phase = _best_symbol_phase(discriminator, samples_per_symbol)
     symbols = discriminator[phase::samples_per_symbol]
     scale = float(np.percentile(np.abs(symbols), 90)) if symbols.size else 1.0
@@ -161,8 +226,36 @@ def make_constellation(samples: object, sample_rate_hz: float, max_points: int =
         iq_points=iq_points,
         symbol_points=symbol_points,
         samples_per_symbol=samples_per_symbol,
-        message=f"{len(iq_points)} IQ pts, {len(symbol_points)} C4FM symbols",
+        frequency_offset_hz=offset_hz,
+        channel_sample_rate_hz=channel_rate_hz,
+        message=f"{len(iq_points)} IQ pts, {len(symbol_points)} C4FM symbols, AFC {offset_hz:+.0f} Hz",
     )
+
+
+def _estimate_frequency_offset(iq: object, sample_rate_hz: float, search_hz: float) -> float:
+    import numpy as np
+
+    fft_size = min(int(len(iq)), 16384)
+    if fft_size < 128:
+        return 0.0
+    block = np.asarray(iq[-fft_size:], dtype=np.complex64)
+    window = np.hanning(block.size).astype(np.float32)
+    spectrum = np.fft.fftshift(np.fft.fft(block * window))
+    offsets = np.fft.fftshift(np.fft.fftfreq(block.size, d=1.0 / float(sample_rate_hz)))
+    mask = np.abs(offsets) <= float(search_hz)
+    if not mask.any():
+        return 0.0
+    search_offsets = offsets[mask]
+    search_power = np.abs(spectrum[mask]) ** 2
+    if search_power.size == 0:
+        return 0.0
+    peak = int(np.argmax(search_power))
+    left = max(0, peak - 2)
+    right = min(search_power.size, peak + 3)
+    weights = search_power[left:right]
+    if float(np.sum(weights)) <= 0.0:
+        return float(search_offsets[peak])
+    return float(np.sum(search_offsets[left:right] * weights) / np.sum(weights))
 
 
 def parse_tsbk(block: bytes) -> P25ControlStatus | None:

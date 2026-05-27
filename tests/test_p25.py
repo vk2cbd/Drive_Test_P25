@@ -1,4 +1,5 @@
 from radio_survey.p25 import parse_tsbk
+from radio_survey.p25 import channelize_p25, make_constellation
 
 
 def _block(opcode: int, fields: tuple[tuple[int, int, int], ...]) -> bytes:
@@ -39,3 +40,31 @@ def test_parse_adjacent_site_broadcast() -> None:
     assert neighbour.site_id == 14
     assert neighbour.channel_id == 1
     assert neighbour.channel_number == 77
+
+
+def test_channelizer_estimates_frequency_offset() -> None:
+    import numpy as np
+
+    sample_rate_hz = 96_000.0
+    offset_hz = 4_200.0
+    t = np.arange(8192, dtype=np.float32) / sample_rate_hz
+    samples = np.exp(1j * 2.0 * np.pi * offset_hz * t).astype(np.complex64)
+
+    channel, channel_rate_hz, estimate_hz = channelize_p25(samples, sample_rate_hz)
+
+    assert len(channel) > 100
+    assert channel_rate_hz <= sample_rate_hz
+    assert abs(estimate_hz - offset_hz) < 250.0
+
+
+def test_constellation_reports_channelized_signal() -> None:
+    import numpy as np
+
+    t = np.arange(4096)
+    samples = np.exp(1j * 0.05 * np.sin(t / 8)).astype(np.complex64)
+
+    constellation = make_constellation(samples, 96_000.0)
+
+    assert constellation.iq_points
+    assert constellation.symbol_points
+    assert constellation.channel_sample_rate_hz > 0.0
