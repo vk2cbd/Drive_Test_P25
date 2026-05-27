@@ -74,12 +74,12 @@ class SurveyApp(tk.Tk):
         self._p25_status = P25ControlStatus()
         self._p25_constellation = P25Constellation()
         self._p25_lock = threading.Lock()
-        self._p25_afc_enabled = bool(self._settings.get("p25_afc_enabled", True))
         self._events: queue.Queue[tuple[str, object]] = queue.Queue()
         self._points: list[LevelPoint] = []
         self._vars: dict[str, tk.Variable] = {}
         self._widgets: dict[str, ttk.Widget] = {}
         self._settings = load_settings()
+        self._p25_afc_enabled = bool(self._settings.get("p25_afc_enabled", True))
         self._last_valid_sdr_values: dict[str, object] = {}
         self._last_valid_y_max = self._valid_y_value(self._settings.get("plot_y_max_dbm", -40.0), -40.0)
         self._last_valid_y_min = self._valid_y_value(self._settings.get("plot_y_min_dbm", -120.0), -120.0)
