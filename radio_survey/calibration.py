@@ -63,6 +63,13 @@ def calibration_band_for_label(label: str) -> CalibrationBand:
     return CALIBRATION_BANDS[0]
 
 
+def calibration_band_for_frequency(frequency_mhz: object) -> CalibrationBand | None:
+    for band in CALIBRATION_BANDS:
+        if band.contains(frequency_mhz):
+            return band
+    return None
+
+
 @dataclass(frozen=True)
 class CalibrationPoint:
     label: str

@@ -1,4 +1,10 @@
-from radio_survey.calibration import CalibrationPoint, CalibrationProfile, new_calibration_profile, new_vhf_broadcast_profile
+from radio_survey.calibration import (
+    CalibrationPoint,
+    CalibrationProfile,
+    calibration_band_for_frequency,
+    new_calibration_profile,
+    new_vhf_broadcast_profile,
+)
 
 
 def test_calibration_interpolates_and_extrapolates() -> None:
@@ -42,6 +48,15 @@ def test_calibration_band_frequency_ranges() -> None:
     assert uhf_high.metadata_mismatches({"center_frequency_mhz": 440.0}) == ()
     assert uhf_high.metadata_mismatches({"center_frequency_mhz": 520.0}) == ()
     assert uhf_high.metadata_mismatches({"center_frequency_mhz": 520.1}) == ("center_frequency_mhz",)
+
+
+def test_calibration_band_for_frequency() -> None:
+    assert calibration_band_for_frequency(100.0).key == "vhf_broadcast"
+    assert calibration_band_for_frequency(146.5).key == "vhf_high"
+    assert calibration_band_for_frequency(430.0).key == "uhf_low"
+    assert calibration_band_for_frequency(470.0).key == "uhf_high"
+    assert calibration_band_for_frequency(30.0) is None
+    assert calibration_band_for_frequency("not-a-frequency") is None
 
 
 def test_calibration_lock_round_trip() -> None:

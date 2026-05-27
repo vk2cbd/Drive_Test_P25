@@ -14,6 +14,7 @@ from .calibration import (
     CalibrationBand,
     CalibrationPoint,
     CalibrationProfile,
+    calibration_band_for_frequency,
     calibration_band_for_label,
     load_calibrations,
     new_calibration_profile,
@@ -87,6 +88,7 @@ class SurveyApp(tk.Tk):
         self._spectrum_average_frequencies: tuple[float, ...] | None = None
         self._calibrations: dict[str, CalibrationProfile] = load_calibrations()
         self._calibration: CalibrationProfile | None = None
+        self._active_calibration: CalibrationProfile | None = None
         self._calibration_valid = False
         self._last_valid_plot_window_minutes = self._valid_plot_window_minutes(self._settings.get("plot_window_minutes", 10))
         self._last_autoscale_y = False
@@ -818,33 +820,54 @@ class SurveyApp(tk.Tk):
         metadata["center_frequency_mhz"] = round(float(metadata.get("center_frequency_mhz", 0.0)), 6)
         return metadata
 
+    def _calibration_band_for_current_config(self, metadata: dict[str, object]) -> CalibrationBand | None:
+        return calibration_band_for_frequency(metadata.get("center_frequency_mhz"))
+
     def _update_calibration_status(self) -> None:
         if not hasattr(self, "calibration_status_var"):
             return
-        band = self._selected_calibration_band()
-        self._calibration = self._calibrations.get(band.key)
-        if self._calibration is None:
+        selected_band = self._selected_calibration_band()
+        selected_profile = self._calibrations.get(selected_band.key)
+        self._calibration = selected_profile
+        self.calibration_locked_var.set(bool(selected_profile and selected_profile.locked))
+
+        metadata = self._collect_calibration_metadata()
+        active_band = self._calibration_band_for_current_config(metadata)
+        if active_band is None:
             self._calibration_valid = False
-            self.calibration_locked_var.set(False)
-            self.calibration_status_var.set(f"No {band.label} calibration loaded")
-            self.calibration_status_label.configure(fg="#555555")
+            self._active_calibration = None
+            self.calibration_status_var.set("Current config uncalibrated: frequency outside calibration bands")
+            self.calibration_status_label.configure(fg="#b00020")
             return
-        self.calibration_locked_var.set(self._calibration.locked)
-        mismatches = self._calibration.metadata_mismatches(self._collect_calibration_metadata())
-        point_count = len(self._calibration.points)
+
+        profile = self._calibrations.get(active_band.key)
+        self._active_calibration = profile
+        editing = "" if selected_band.key == active_band.key else f" | Editing: {selected_band.label}"
+        if profile is None:
+            self._calibration_valid = False
+            self.calibration_status_var.set(f"Current config uncalibrated: no {active_band.label} calibration{editing}")
+            self.calibration_status_label.configure(fg="#b00020")
+            return
+
+        mismatches = profile.metadata_mismatches(metadata)
+        point_count = len(profile.points)
         if mismatches:
             self._calibration_valid = False
             self.calibration_status_var.set(
-                f"{band.label} mismatch: {', '.join(mismatches[:4])}"
+                f"Current config uncalibrated: {active_band.label} mismatch: {', '.join(mismatches[:4])}"
                 + ("..." if len(mismatches) > 4 else "")
+                + editing
             )
             self.calibration_status_label.configure(fg="#b00020")
         else:
-            self._calibration_valid = self._calibration.has_points(tuple(label for label, _target in CALIBRATION_TARGETS))
-            state = "active" if self._calibration_valid else "loaded"
-            locked = ", locked" if self._calibration.locked else ", unlocked"
-            self.calibration_status_var.set(f"{band.label} calibration {state}: {point_count}/6 points{locked}")
-            self.calibration_status_label.configure(fg="#222222")
+            self._calibration_valid = profile.has_points(tuple(label for label, _target in CALIBRATION_TARGETS))
+            locked = ", locked" if profile.locked else ", unlocked"
+            if self._calibration_valid:
+                self.calibration_status_var.set(f"Current config calibrated: {active_band.label} {point_count}/6 points{locked}{editing}")
+                self.calibration_status_label.configure(fg="#222222")
+            else:
+                self.calibration_status_var.set(f"Current config uncalibrated: {active_band.label} has {point_count}/6 points{locked}{editing}")
+                self.calibration_status_label.configure(fg="#b00020")
 
     def _toggle_logging(self) -> None:
         self._sync_logger_state()
@@ -1361,8 +1384,8 @@ class SurveyApp(tk.Tk):
         self.destroy()
 
     def _apply_calibration(self, measured_dbm: float) -> float:
-        if self._calibration_valid and self._calibration is not None:
-            return self._calibration.apply(measured_dbm)
+        if self._calibration_valid and self._active_calibration is not None:
+            return self._active_calibration.apply(measured_dbm)
         return measured_dbm
 
 

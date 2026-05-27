@@ -1,3 +1,3 @@
 """Radio network survey logger."""
 
-__version__ = "0.4.16-beta"
+__version__ = "0.4.17-beta"

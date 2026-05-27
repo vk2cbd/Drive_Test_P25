@@ -1,6 +1,6 @@
 # Radio Network Survey Logger
 
-Version: `0.4.16-beta`
+Version: `0.4.17-beta`
 
 Python GUI application for surveying a radio network with:
 
@@ -82,7 +82,9 @@ Set the calibration **Band** selector, set the GUI to the exact SDR settings you
 - `-40 dBm`
 - `1 dB compression`, with the generator level entered in **Compression dBm**
 
-The app interpolates or extrapolates between the signal-level calibration points and applies the correction to the received level, CSV log, and spectrum display. Centre frequency remains valid anywhere within the selected calibration band's frequency range. Tuner, antenna, HDR mode, Bias T, DAB notch, FM notch, and MW notch changes do not invalidate the calibration status. Other current SDR GUI settings must match the stored calibration metadata, and centre frequency must stay in the selected band range, otherwise the calibration status text turns red and the calibration is not applied until the settings match again.
+The app interpolates or extrapolates between the signal-level calibration points and applies the correction to the received level, CSV log, and spectrum display. The live calibration profile is selected automatically from the current centre frequency, so changing from VHF high to UHF low uses the matching stored band calibration without changing the calibration editor. If no profile exists for the current frequency band, or if the profile is incomplete, the GUI flags the current configuration as uncalibrated and does not apply a correction.
+
+Centre frequency remains valid anywhere within that calibration band's frequency range. Tuner, antenna, HDR mode, Bias T, DAB notch, FM notch, and MW notch changes do not invalidate the calibration status. Other current SDR GUI settings must match the stored calibration metadata, otherwise the calibration status text turns red and the calibration is not applied until the settings match again.
 
 Use **Locked** after a band calibration is complete. While locked, the app blocks **New band cal** and **Capture point** for that band. Unlocking prompts for confirmation so stored calibration points are not easily changed by accident.
 
