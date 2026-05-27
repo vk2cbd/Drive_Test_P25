@@ -1,22 +1,31 @@
 # Radio Network Survey Logger
 
-Version: `0.5.1-p25`
+Version: `0.6.0-p25-op25`
 
 Python GUI application for P25 control-channel development, branched from the radio network survey logger, with:
 
-- SDRplay RSPdx SDR, currently through an optional SoapySDR backend
-- Focused SDR controls for P25 testing
-- Continuous IQ-fed P25 worker
-- Channelized IQ and C4FM discriminator diagnostics
-- Experimental P25 Phase 1 control-channel panel for WACN, system/site, and neighbour-site information
+- OP25 `rx.py` launcher and monitor
+- SDRplay/RSPdx settings passed to OP25 through GNU Radio/osmosdr device args
+- Generated `trunk.tsv` control-channel configuration
+- OP25 output display with parsed WACN, system, NAC, RFSS/site, and neighbour hints
 
-The original survey app remains in the source tree, but the P25 branch default entry point is now a simplified receiver so frame sync and control-channel demodulation can be debugged without GPS, CSV logging, calibration, received-level plotting, or survey workflow activity.
+The original survey app and the earlier experimental Python P25 decoder remain in the source tree, but the P25 branch default entry point now uses OP25 for demodulation and control-channel decode.
 
-## Experimental P25 Control Channel
+## OP25 Control Channel
 
-The P25 branch launches as a simplified Phase 1 control-channel receiver. When the SDR is tuned to a P25 control channel, the app uses the live IQ samples to run a C4FM discriminator and P25 frame-sync search. The panel displays decoder status, estimated AFC offset, WACN, system ID, RFSS/site, and advertised neighbour sites when decodable trunking signalling blocks are recovered. It also includes a diagnostic constellation view with channelized IQ scatter on the left and C4FM discriminator symbol levels on the right, which helps check signal quality, tuning, clipping, and whether the input resembles a usable P25 control channel.
+The P25 branch launches as an OP25 front-end. The app writes a minimal `trunk.tsv`, starts OP25 `rx.py`, captures OP25 output, and shows parsed control-channel fields when OP25 reports them. OP25 provides the proven P25 demodulator, symbol timing, fine-tune tracking, trunking logic, and plots.
 
-This is an early development feature. It includes a P25 channelizer, automatic frequency correction, RF demod/front-end, frame-sync search, and parser for common Network Status Broadcast, RFSS Status Broadcast, and Adjacent Site Status Broadcast messages. The channelizer searches for the strongest signal near the tuned centre frequency, shifts it to baseband in software, filters it to the P25 channel width, and decimates it to a decoder-friendly rate before symbol slicing. P25 decoding runs in a dedicated worker fed continuously from the SDR IQ stream; it is not gated by GPS fixes or the one-sample-per-second drive-test logging cadence. The GUI reports **No P25 frame sync** or **P25 sync, waiting for decodable TSBK** until the control channel recovery path has enough valid data to populate those fields.
+Install OP25 separately, for example the `boatbod/op25` fork, and set **OP25 apps dir** to the directory containing `rx.py`, usually:
+
+```text
+~/op25/op25/gr-op25_repeater/apps
+```
+
+For SDRplay via SoapySDR/gr-osmosdr, the default device args are:
+
+```text
+soapy=0,driver=sdrplay
+```
 
 ## Ubuntu Quick Start
 
