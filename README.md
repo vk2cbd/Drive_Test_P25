@@ -1,6 +1,6 @@
 # Radio Network Survey Logger
 
-Version: `0.4.17-beta`
+Version: `0.5.0-p25`
 
 Python GUI application for surveying a radio network with:
 
@@ -10,8 +10,15 @@ Python GUI application for surveying a radio network with:
 - Received-level logging to CSV
 - Scrolling received-level plot with a configurable 1 to 60 minute time window
 - Live spectrum display using the configured center frequency and IF bandwidth
+- Experimental P25 Phase 1 control-channel panel for WACN, system/site, and neighbour-site information
 
 The app includes simulator modes for both GPS and SDR so the GUI and logging flow can be tested before hardware is connected.
+
+## Experimental P25 Control Channel
+
+The P25 branch adds an initial Phase 1 control-channel decoder panel. When the SDR is tuned to a P25 control channel, the app uses the live IQ samples to run a C4FM discriminator and P25 frame-sync search. The panel displays decoder status, WACN, system ID, RFSS/site, and advertised neighbour sites when decodable trunking signalling blocks are recovered.
+
+This is an early development feature. It includes the RF demod/front-end, frame-sync search, and parser for common Network Status Broadcast, RFSS Status Broadcast, and Adjacent Site Status Broadcast messages. The GUI reports **No P25 frame sync** or **P25 sync, waiting for decodable TSBK** until the control channel recovery path has enough valid data to populate those fields.
 
 ## Ubuntu Quick Start
 

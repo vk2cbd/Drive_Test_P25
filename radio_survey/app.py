@@ -24,6 +24,7 @@ from .config import SDR_PARAMETER_DEFS, ParameterDef
 from .gps import SerialGpsSource, SimulatedGpsSource, default_gps_port, discover_gps_ports
 from .logger import CsvSurveyLogger
 from .nmea import GpsFix
+from .p25 import P25ControlChannelDecoder, P25ControlStatus
 from .settings import load_settings, save_settings
 from .sdr import LevelMeter, create_level_meter
 
@@ -65,6 +66,7 @@ class SurveyApp(tk.Tk):
         self._level_meter: LevelMeter | None = None
         self._active_sdr_backend: str | None = None
         self._logger: CsvSurveyLogger | None = None
+        self._p25_decoder = P25ControlChannelDecoder()
         self._events: queue.Queue[tuple[str, object]] = queue.Queue()
         self._points: list[LevelPoint] = []
         self._vars: dict[str, tk.Variable] = {}
@@ -147,6 +149,7 @@ class SurveyApp(tk.Tk):
         self._build_calibration_panel(setup)
         self._build_status_panel(plot_area)
         self._build_plot_panel(plot_area)
+        self._build_p25_panel(plot_area)
         self._build_sdr_panel(plot_area)
         self._update_calibration_status()
 
@@ -387,6 +390,28 @@ class SurveyApp(tk.Tk):
         window_spinbox.bind("<KP_Enter>", lambda _event: self._commit_plot_window())
         ttk.Button(controls, text="Back", command=self._back_plot_view).grid(row=0, column=3, sticky="e", padx=(6, 0))
 
+    def _build_p25_panel(self, parent: ttk.Frame) -> None:
+        frame = ttk.LabelFrame(parent, text="P25 Control Channel", padding=8)
+        frame.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        frame.columnconfigure(1, weight=1)
+        self.p25_status_var = tk.StringVar(value="Waiting for P25 control channel")
+        self.p25_wacn_var = tk.StringVar(value="-")
+        self.p25_system_var = tk.StringVar(value="-")
+        self.p25_site_var = tk.StringVar(value="-")
+        self.p25_neighbours_var = tk.StringVar(value="-")
+
+        for row, (label, var) in enumerate(
+            (
+                ("Status", self.p25_status_var),
+                ("WACN", self.p25_wacn_var),
+                ("System", self.p25_system_var),
+                ("RFSS/Site", self.p25_site_var),
+                ("Neighbours", self.p25_neighbours_var),
+            )
+        ):
+            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=1)
+            ttk.Label(frame, textvariable=var, wraplength=430, justify="left").grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=1)
+
     def _make_var(self, param: ParameterDef) -> tk.Variable:
         value = self._settings.get(param.key, self._legacy_setting_value(param))
         if param.kind == "choice" and param.choices and value not in param.choices and str(value) not in {str(choice) for choice in param.choices}:
@@ -472,6 +497,8 @@ class SurveyApp(tk.Tk):
         self.stop_button.configure(state="disabled")
         self.status_var.set("Stopped")
         self.sdr_status_var.set("SDR not started")
+        self._p25_decoder = P25ControlChannelDecoder()
+        self._set_p25_display(P25ControlStatus(message="Waiting for P25 control channel"))
         self._plot_right_edge_s = time.time()
         self._redraw_plot()
 
@@ -1033,6 +1060,7 @@ class SurveyApp(tk.Tk):
             self._plot_right_edge_s = point_time
         self._update_spectrum_average()
         self._redraw_spectrum()
+        self._update_p25_display()
         self._redraw_plot()
 
     def _check_gps_stale(self) -> None:
@@ -1073,6 +1101,36 @@ class SurveyApp(tk.Tk):
             self.satellites_var.set(str(fix.satellites))
         if fix.speed_kmh is not None:
             self.speed_var.set(f"{fix.speed_kmh:.1f}")
+
+    def _update_p25_display(self) -> None:
+        if self._level_meter is None:
+            self._set_p25_display(P25ControlStatus())
+            return
+        try:
+            snapshot = self._level_meter.get_last_iq_snapshot()
+        except Exception as exc:
+            self._set_p25_display(P25ControlStatus(message=f"P25 sample error: {exc}"))
+            return
+        if snapshot is None:
+            self._set_p25_display(P25ControlStatus(message="P25 decoder needs live SDR IQ samples"))
+            return
+        status = self._p25_decoder.update(snapshot.samples, snapshot.sample_rate_hz)
+        self._set_p25_display(status)
+
+    def _set_p25_display(self, status: P25ControlStatus) -> None:
+        if not hasattr(self, "p25_status_var"):
+            return
+        detail = status.message
+        if status.frame_syncs:
+            detail = f"{detail}; syncs {status.frame_syncs}; TSBK {status.tsbks}"
+        self.p25_status_var.set(detail)
+        self.p25_wacn_var.set(status.wacn or "-")
+        self.p25_system_var.set(status.system_id or "-")
+        if status.rfss_id is not None and status.site_id is not None:
+            self.p25_site_var.set(f"{status.rfss_id}/{status.site_id}")
+        else:
+            self.p25_site_var.set("-")
+        self.p25_neighbours_var.set("; ".join(neighbour.display() for neighbour in status.neighbours) or "-")
 
     def _redraw_plot(self) -> None:
         canvas = self.canvas

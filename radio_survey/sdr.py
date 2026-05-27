@@ -15,6 +15,13 @@ class SpectrumSnapshot:
 
 
 @dataclass(frozen=True)
+class IqSnapshot:
+    samples: object
+    sample_rate_hz: float
+    center_frequency_hz: float
+
+
+@dataclass(frozen=True)
 class MeterDiagnostics:
     applied: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
@@ -25,6 +32,7 @@ class LevelMeter(Protocol):
     def update_settings(self, params: dict[str, object]) -> None: ...
     def read_level_dbm(self) -> float: ...
     def get_last_spectrum(self) -> SpectrumSnapshot | None: ...
+    def get_last_iq_snapshot(self) -> IqSnapshot | None: ...
     def get_diagnostics(self) -> MeterDiagnostics: ...
     def close(self) -> None: ...
 
@@ -34,6 +42,7 @@ class SimulatedLevelMeter:
         self._start = time.monotonic()
         self._offset = -82.0
         self._center_frequency_hz = 100_000_000.0
+        self._sample_rate_hz = 2_000_000.0
         self._bandwidth_hz = 1_536_000.0
         self._last_spectrum: SpectrumSnapshot | None = None
 
@@ -56,6 +65,9 @@ class SimulatedLevelMeter:
 
     def get_last_spectrum(self) -> SpectrumSnapshot | None:
         return self._last_spectrum
+
+    def get_last_iq_snapshot(self) -> IqSnapshot | None:
+        return None
 
     def get_diagnostics(self) -> MeterDiagnostics:
         return MeterDiagnostics(applied=("Simulator level source",), warnings=())
@@ -90,6 +102,7 @@ class SoapySdrplayLevelMeter:
         self._dbm_offset = -30.0
         self._last_level_dbm: float | None = None
         self._last_spectrum: SpectrumSnapshot | None = None
+        self._last_iq_snapshot: IqSnapshot | None = None
         self._center_frequency_hz = 100_000_000.0
         self._sample_rate_hz = 2_000_000.0
         self._bandwidth_hz = 1_536_000.0
@@ -126,6 +139,7 @@ class SoapySdrplayLevelMeter:
         self._measurement_bandwidth_hz = _measurement_bandwidth_param_hz(params, 25_000.0)
         self._last_level_dbm = None
         self._last_spectrum = None
+        self._last_iq_snapshot = None
         self._sample_counter = 0
         notes: list[str] = []
         warnings: list[str] = []
@@ -172,6 +186,7 @@ class SoapySdrplayLevelMeter:
         with self._condition:
             self._last_level_dbm = None
             self._last_spectrum = None
+            self._last_iq_snapshot = None
             self._last_error = None
             self._sample_counter = 0
         self._sdr.setFrequency(self._direction, self._channel, self._center_frequency_hz)
@@ -206,6 +221,10 @@ class SoapySdrplayLevelMeter:
     def get_last_spectrum(self) -> SpectrumSnapshot | None:
         with self._condition:
             return self._last_spectrum
+
+    def get_last_iq_snapshot(self) -> IqSnapshot | None:
+        with self._condition:
+            return self._last_iq_snapshot
 
     def get_diagnostics(self) -> MeterDiagnostics:
         return self._diagnostics
@@ -255,9 +274,11 @@ class SoapySdrplayLevelMeter:
                     samples = buff[: result.ret].copy()
                     level_dbm = self._measure_channel_power(samples)
                     spectrum = self._make_spectrum(samples)
+                    iq_snapshot = IqSnapshot(samples=samples, sample_rate_hz=self._sample_rate_hz, center_frequency_hz=self._center_frequency_hz)
                     with self._condition:
                         self._last_level_dbm = level_dbm
                         self._last_spectrum = spectrum
+                        self._last_iq_snapshot = iq_snapshot
                         self._last_error = None
                         self._sample_counter += 1
                         self._condition.notify_all()
