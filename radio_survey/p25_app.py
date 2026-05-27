@@ -2,13 +2,30 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 import tkinter as tk
+from dataclasses import dataclass
 from tkinter import messagebox, ttk
 
 from . import __version__
 from .p25 import P25Constellation, P25ControlChannelDecoder, P25ControlStatus, make_constellation
 from .sdr import IqSnapshot, LevelMeter, create_level_meter
 from .settings import load_settings, save_settings
+
+
+@dataclass
+class P25RuntimeCounters:
+    sdr_blocks: int = 0
+    worker_blocks: int = 0
+    queue_drops: int = 0
+    worker_samples: int = 0
+    gui_refreshes: int = 0
+    last_sdr_blocks: int = 0
+    last_worker_blocks: int = 0
+    last_queue_drops: int = 0
+    last_worker_samples: int = 0
+    last_gui_refreshes: int = 0
+    last_report_s: float = 0.0
 
 
 class P25ReceiverApp(tk.Tk):
@@ -28,6 +45,8 @@ class P25ReceiverApp(tk.Tk):
         self._status = P25ControlStatus(message="Stopped")
         self._constellation = P25Constellation(message="No IQ samples")
         self._afc_enabled = bool(self._settings.get("p25_afc_enabled", True))
+        self._counters = P25RuntimeCounters(last_report_s=time.monotonic())
+        self._rates_text = "SDR 0.0 blk/s | worker 0.0 blk/s | drops 0.0/s | samples 0.000 Msps | GUI 0.0 Hz"
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -107,10 +126,14 @@ class P25ReceiverApp(tk.Tk):
         self.system_var = tk.StringVar(value="-")
         self.site_var = tk.StringVar(value="-")
         self.neighbours_var = tk.StringVar(value="-")
+        self.sync_var = tk.StringVar(value="-")
+        self.rates_var = tk.StringVar(value=self._rates_text)
         for row, (label, var) in enumerate(
             (
                 ("Status", self.status_var),
                 ("AFC offset", self.offset_var),
+                ("Sync quality", self.sync_var),
+                ("Stream rates", self.rates_var),
                 ("WACN", self.wacn_var),
                 ("System", self.system_var),
                 ("RFSS/Site", self.site_var),
@@ -169,6 +192,9 @@ class P25ReceiverApp(tk.Tk):
             self._decoder = P25ControlChannelDecoder()
             self._iq_queue = queue.Queue(maxsize=24)
             self._stop_worker = threading.Event()
+            with self._lock:
+                self._counters = P25RuntimeCounters(last_report_s=time.monotonic())
+                self._rates_text = "SDR 0.0 blk/s | worker 0.0 blk/s | drops 0.0/s | samples 0.000 Msps | GUI 0.0 Hz"
             self._worker = threading.Thread(target=self._worker_loop, name="p25-only-decoder", daemon=True)
             self._worker.start()
             self._level_meter.set_iq_callback(self._queue_iq)
@@ -191,6 +217,11 @@ class P25ReceiverApp(tk.Tk):
         if self._worker is not None:
             self._worker.join(timeout=1.0)
             self._worker = None
+        while True:
+            try:
+                self._iq_queue.get_nowait()
+            except queue.Empty:
+                break
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         with self._lock:
@@ -198,9 +229,13 @@ class P25ReceiverApp(tk.Tk):
             self._constellation = P25Constellation(message="No IQ samples")
 
     def _queue_iq(self, snapshot: IqSnapshot) -> None:
+        with self._lock:
+            self._counters.sdr_blocks += 1
         try:
             self._iq_queue.put_nowait(snapshot)
         except queue.Full:
+            with self._lock:
+                self._counters.queue_drops += 1
             try:
                 self._iq_queue.get_nowait()
             except queue.Empty:
@@ -220,6 +255,9 @@ class P25ReceiverApp(tk.Tk):
             try:
                 status = self._decoder.update(snapshot.samples, snapshot.sample_rate_hz, self._afc_enabled)
                 count += 1
+                with self._lock:
+                    self._counters.worker_blocks += 1
+                    self._counters.worker_samples += len(snapshot.samples)
                 constellation = None
                 if count % 3 == 0:
                     constellation = make_constellation(snapshot.samples, snapshot.sample_rate_hz, frequency_offset_hz=status.frequency_offset_hz)
@@ -235,6 +273,9 @@ class P25ReceiverApp(tk.Tk):
         with self._lock:
             status = self._status
             constellation = self._constellation
+            self._counters.gui_refreshes += 1
+            self._update_rates_locked()
+            rates_text = self._rates_text
         detail = status.message
         if status.frame_syncs:
             detail = f"{detail}; syncs {status.frame_syncs}; TSBK {status.tsbks}"
@@ -243,6 +284,14 @@ class P25ReceiverApp(tk.Tk):
             self.offset_var.set(f"{status.frequency_offset_hz:+.0f} Hz, channel {status.channel_sample_rate_hz / 1000.0:.1f} ksps")
         else:
             self.offset_var.set("-")
+        if status.best_sync_distance is None:
+            self.sync_var.set(f"buffer {status.bit_buffer_length} bits, no full sync window yet")
+        else:
+            self.sync_var.set(
+                f"best {status.best_sync_distance} bit errors / 48, "
+                f"near {status.near_syncs}, buffer {status.bit_buffer_length} bits"
+            )
+        self.rates_var.set(rates_text)
         self.wacn_var.set(status.wacn or "-")
         self.system_var.set(status.system_id or "-")
         self.site_var.set(f"{status.rfss_id}/{status.site_id}" if status.rfss_id is not None and status.site_id is not None else "-")
@@ -250,6 +299,30 @@ class P25ReceiverApp(tk.Tk):
         self._latest_constellation = constellation
         self._draw_constellation()
         self.after(200, self._refresh_ui)
+
+    def _update_rates_locked(self) -> None:
+        now_s = time.monotonic()
+        elapsed_s = now_s - self._counters.last_report_s
+        if elapsed_s < 0.75:
+            return
+        sdr_delta = self._counters.sdr_blocks - self._counters.last_sdr_blocks
+        worker_delta = self._counters.worker_blocks - self._counters.last_worker_blocks
+        drop_delta = self._counters.queue_drops - self._counters.last_queue_drops
+        sample_delta = self._counters.worker_samples - self._counters.last_worker_samples
+        gui_delta = self._counters.gui_refreshes - self._counters.last_gui_refreshes
+        self._rates_text = (
+            f"SDR {sdr_delta / elapsed_s:.1f} blk/s | "
+            f"worker {worker_delta / elapsed_s:.1f} blk/s | "
+            f"drops {drop_delta / elapsed_s:.1f}/s | "
+            f"samples {sample_delta / elapsed_s / 1_000_000.0:.3f} Msps | "
+            f"GUI {gui_delta / elapsed_s:.1f} Hz"
+        )
+        self._counters.last_sdr_blocks = self._counters.sdr_blocks
+        self._counters.last_worker_blocks = self._counters.worker_blocks
+        self._counters.last_queue_drops = self._counters.queue_drops
+        self._counters.last_worker_samples = self._counters.worker_samples
+        self._counters.last_gui_refreshes = self._counters.gui_refreshes
+        self._counters.last_report_s = now_s
 
     def _draw_constellation(self) -> None:
         canvas = self.constellation_canvas

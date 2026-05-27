@@ -39,6 +39,9 @@ class P25ControlStatus:
     tsbks: int = 0
     frequency_offset_hz: float = 0.0
     channel_sample_rate_hz: float = 0.0
+    best_sync_distance: int | None = None
+    near_syncs: int = 0
+    bit_buffer_length: int = 0
     message: str = "Waiting for P25 control channel"
 
 
@@ -85,11 +88,15 @@ class P25ControlChannelDecoder:
             return self._status
 
         self._bit_buffer = (self._bit_buffer + bits)[-24000:]
+        best_distance, near_syncs = _sync_quality(self._bit_buffer, P25_FRAME_SYNC_BITS, max(P25_SYNC_MAX_BIT_ERRORS * 2, 8))
         sync_offsets = _find_sync_offsets(self._bit_buffer, P25_FRAME_SYNC_BITS, P25_SYNC_MAX_BIT_ERRORS)
         if not sync_offsets:
             self._status = P25ControlStatus(
                 frequency_offset_hz=self._frequency_offset_hz,
                 channel_sample_rate_hz=channel_rate_hz,
+                best_sync_distance=best_distance,
+                near_syncs=near_syncs,
+                bit_buffer_length=len(self._bit_buffer),
                 message="No P25 frame sync",
             )
             return self._status
@@ -118,6 +125,9 @@ class P25ControlChannelDecoder:
             tsbks=tsbk_count,
             frequency_offset_hz=self._frequency_offset_hz,
             channel_sample_rate_hz=channel_rate_hz,
+            best_sync_distance=best_distance,
+            near_syncs=near_syncs,
+            bit_buffer_length=len(self._bit_buffer),
             message=message,
         )
         return self._status
@@ -330,6 +340,21 @@ def _find_sync_offsets(value: str, pattern: str, max_errors: int) -> tuple[int, 
         if _hamming_distance(value[start : start + pattern_length], pattern) <= max_errors:
             offsets.append(start)
     return tuple(offsets)
+
+
+def _sync_quality(value: str, pattern: str, near_threshold: int) -> tuple[int | None, int]:
+    pattern_length = len(pattern)
+    if len(value) < pattern_length:
+        return None, 0
+    best: int | None = None
+    near = 0
+    for start in range(0, len(value) - pattern_length + 1):
+        distance = _hamming_distance(value[start : start + pattern_length], pattern)
+        if best is None or distance < best:
+            best = distance
+        if distance <= near_threshold:
+            near += 1
+    return best, near
 
 
 def _find_all(value: str, pattern: str) -> tuple[int, ...]:

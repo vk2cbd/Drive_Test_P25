@@ -1,5 +1,6 @@
 from radio_survey.p25 import parse_tsbk
-from radio_survey.p25 import channelize_p25, make_constellation
+from radio_survey.p25 import P25_FRAME_SYNC_BITS, channelize_p25, make_constellation
+from radio_survey.p25 import _sync_quality
 
 
 def _block(opcode: int, fields: tuple[tuple[int, int, int], ...]) -> bytes:
@@ -68,3 +69,11 @@ def test_constellation_reports_channelized_signal() -> None:
     assert constellation.iq_points
     assert constellation.symbol_points
     assert constellation.channel_sample_rate_hz > 0.0
+
+
+def test_sync_quality_reports_best_distance_and_near_hits() -> None:
+    noisy_sync = P25_FRAME_SYNC_BITS[:10] + ("1" if P25_FRAME_SYNC_BITS[10] == "0" else "0") + P25_FRAME_SYNC_BITS[11:]
+    best, near = _sync_quality("0" * 20 + noisy_sync + "1" * 20, P25_FRAME_SYNC_BITS, 3)
+
+    assert best == 1
+    assert near >= 1
