@@ -12,6 +12,9 @@ from .op25_runner import OP25Config, OP25Status, build_op25_command, parse_op25_
 from .settings import load_settings, save_settings
 
 
+OP25_OUTPUT_MAX_LINES = 2500
+
+
 class P25ReceiverApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -25,6 +28,7 @@ class P25ReceiverApp(tk.Tk):
         self._output_queue: queue.Queue[str] = queue.Queue()
         self._status = OP25Status()
         self._work_dir = Path.home() / ".config" / "radio_survey" / "op25"
+        self._output_line_count = 0
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -131,6 +135,7 @@ class P25ReceiverApp(tk.Tk):
         self.output_text.configure(yscrollcommand=scrollbar.set)
         self.output_text.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
+        ttk.Label(log_frame, text=f"Showing latest {OP25_OUTPUT_MAX_LINES} output lines").grid(row=1, column=0, sticky="w", pady=(4, 0))
 
     def _config(self) -> OP25Config:
         return OP25Config(
@@ -221,6 +226,11 @@ class P25ReceiverApp(tk.Tk):
 
     def _append_output(self, text: str) -> None:
         self.output_text.insert("end", text)
+        self._output_line_count += max(1, text.count("\n"))
+        if self._output_line_count > OP25_OUTPUT_MAX_LINES:
+            excess = self._output_line_count - OP25_OUTPUT_MAX_LINES
+            self.output_text.delete("1.0", f"{excess + 1}.0")
+            self._output_line_count -= excess
         self.output_text.see("end")
 
     def _update_status_fields(self) -> None:
